@@ -3,9 +3,10 @@
  * Free Sub Indo Anime Streaming Source
  */
 
+require('dotenv').config();
 const cheerio = require('cheerio');
 
-const BASE_URL = 'https://v20.kuramanime.ing';
+const BASE_URL = process.env.KURAMANIME_URL || 'https://v20.kuramanime.ing';
 const DEFAULT_HEADERS = {
   'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/122.0.0.0 Safari/537.36',
   'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',

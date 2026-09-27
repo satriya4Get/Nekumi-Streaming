@@ -2,7 +2,14 @@ require('dotenv').config();
 const { createAdminClient } = require('@supabase/server/core');
 const bcrypt = require('bcryptjs');
 const path = require('path');
-const Database = require('better-sqlite3');
+
+// Safe loader for better-sqlite3 (optional in serverless / Vercel cloud)
+let Database = null;
+try {
+  Database = require('better-sqlite3');
+} catch (e) {
+  console.log('[DB] Running without native better-sqlite3 (Supabase cloud mode active)');
+}
 
 // 1. Initialize Supabase Admin Client
 let supabase = null;
@@ -20,6 +27,7 @@ try {
 // 2. Initialize Local SQLite as fallback & local cache
 let localDb = null;
 const isVercel = !!process.env.VERCEL;
+const memoryCache = new Map();
 
 function initLocalDatabase(dbInstance) {
   if (!dbInstance) return;
@@ -125,19 +133,30 @@ function initLocalDatabase(dbInstance) {
   }
 }
 
-try {
-  if (!isVercel) {
+if (Database && !isVercel) {
+  try {
     const dbPath = path.join(__dirname, 'aninonton.db');
     localDb = new Database(dbPath);
     localDb.pragma('journal_mode = WAL');
     initLocalDatabase(localDb);
-  } else {
+  } catch (err) {
+    console.warn('[DB] Local SQLite initialization skipped:', err.message);
+  }
+} else if (Database && isVercel) {
+  try {
     localDb = new Database(':memory:');
     initLocalDatabase(localDb);
-    console.log('[DB] Vercel Serverless environment detected: in-memory DB ready.');
+    console.log('[DB] In-memory SQLite initialized for serverless cache.');
+  } catch (_) {}
+}
+
+function queryLocal(fn, defaultVal = null) {
+  if (!localDb) return defaultVal;
+  try {
+    return fn(localDb);
+  } catch (e) {
+    return defaultVal;
   }
-} catch (err) {
-  console.warn('[DB Warning] Local SQLite initialization skipped:', err.message);
 }
 
 // 3. Admin Account Seeding helper (Ensures Satriyaa / Satriyaa1990# exists)
@@ -147,24 +166,22 @@ const ADMIN_EMAIL = 'admin@nekumi.com';
 const ADMIN_HASH = bcrypt.hashSync(ADMIN_PASS_PLAIN, 10);
 
 async function seedAdminAccount() {
-  // A. Seed into Local SQLite
-  try {
-    const existing = localDb.prepare('SELECT id FROM users WHERE username = ? OR email = ?').get(ADMIN_USERNAME, ADMIN_EMAIL);
+  // A. Seed into Local SQLite if available
+  queryLocal(db => {
+    const existing = db.prepare('SELECT id FROM users WHERE username = ? OR email = ?').get(ADMIN_USERNAME, ADMIN_EMAIL);
     if (!existing) {
-      localDb.prepare(`
+      db.prepare(`
         INSERT INTO users (username, email, password, role, avatar, level, xp)
         VALUES (?, ?, ?, 'admin', 'https://api.dicebear.com/7.x/bottts/svg?seed=Satriyaa', 99, 99999)
       `).run(ADMIN_USERNAME, ADMIN_EMAIL, ADMIN_HASH);
       console.log(`[DB] Admin account created in local DB: ${ADMIN_USERNAME} / ${ADMIN_PASS_PLAIN}`);
     } else {
-      localDb.prepare(`
+      db.prepare(`
         UPDATE users SET password = ?, role = 'admin', username = ? WHERE id = ?
       `).run(ADMIN_HASH, ADMIN_USERNAME, existing.id);
       console.log(`[DB] Admin account updated in local DB: ${ADMIN_USERNAME} / ${ADMIN_PASS_PLAIN}`);
     }
-  } catch (err) {
-    console.error('[DB Local Seed Error]:', err.message);
-  }
+  });
 
   // B. Seed into Supabase if connected
   if (supabase) {
@@ -239,7 +256,7 @@ const db = {
         if (!error && data) return data;
       } catch (_) {}
     }
-    return localDb.prepare('SELECT id, username, email, role, avatar, level, xp, episodes_watched, watch_minutes FROM users WHERE id = ?').get(id);
+    return queryLocal(ldb => ldb.prepare('SELECT id, username, email, role, avatar, level, xp, episodes_watched, watch_minutes FROM users WHERE id = ?').get(id), null);
   },
 
   async getUserByEmailOrUsername(identifier) {
@@ -254,7 +271,7 @@ const db = {
         if (!error && data) return data;
       } catch (_) {}
     }
-    return localDb.prepare('SELECT * FROM users WHERE email = ? OR username = ?').get(cleanId.toLowerCase(), cleanId);
+    return queryLocal(ldb => ldb.prepare('SELECT * FROM users WHERE email = ? OR username = ?').get(cleanId.toLowerCase(), cleanId), null);
   },
 
   async getUserByEmail(email) {
@@ -265,7 +282,7 @@ const db = {
         if (!error && data) return data;
       } catch (_) {}
     }
-    return localDb.prepare('SELECT * FROM users WHERE email = ?').get(cleanEmail);
+    return queryLocal(ldb => ldb.prepare('SELECT * FROM users WHERE email = ?').get(cleanEmail), null);
   },
 
   async getUserByUsername(username) {
@@ -276,7 +293,7 @@ const db = {
         if (!error && data) return data;
       } catch (_) {}
     }
-    return localDb.prepare('SELECT * FROM users WHERE username = ?').get(cleanUser);
+    return queryLocal(ldb => ldb.prepare('SELECT * FROM users WHERE username = ?').get(cleanUser), null);
   },
 
   async createUser(userData) {
@@ -284,32 +301,32 @@ const db = {
       try {
         const { data, error } = await supabase.from('users').insert([userData]).select().single();
         if (!error && data) {
-          // Also sync to local
-          try {
-            localDb.prepare(`
+          queryLocal(ldb => {
+            ldb.prepare(`
               INSERT OR REPLACE INTO users (id, username, email, password, role, avatar, level, xp)
               VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             `).run(data.id, data.username, data.email, data.password, data.role, data.avatar, data.level, data.xp);
-          } catch (_) {}
+          });
           return data;
         }
       } catch (_) {}
     }
 
-    const result = localDb.prepare(`
-      INSERT INTO users (username, email, password, role, avatar, level, xp)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      userData.username,
-      userData.email,
-      userData.password,
-      userData.role || 'user',
-      userData.avatar || '',
-      userData.level || 1,
-      userData.xp || 0
-    );
-
-    return { id: result.lastInsertRowid, ...userData };
+    return queryLocal(ldb => {
+      const result = ldb.prepare(`
+        INSERT INTO users (username, email, password, role, avatar, level, xp)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        userData.username,
+        userData.email,
+        userData.password,
+        userData.role || 'user',
+        userData.avatar || '',
+        userData.level || 1,
+        userData.xp || 0
+      );
+      return { id: result.lastInsertRowid, ...userData };
+    }, { id: Date.now(), ...userData });
   },
 
   async updateUserPassword(email, hashedPassword) {
@@ -319,7 +336,7 @@ const db = {
         await supabase.from('users').update({ password: hashedPassword }).eq('email', cleanEmail);
       } catch (_) {}
     }
-    localDb.prepare('UPDATE users SET password = ? WHERE email = ?').run(hashedPassword, cleanEmail);
+    queryLocal(ldb => ldb.prepare('UPDATE users SET password = ? WHERE email = ?').run(hashedPassword, cleanEmail));
     return true;
   },
 
@@ -329,12 +346,10 @@ const db = {
         await supabase.from('users').update(updates).eq('id', id);
       } catch (_) {}
     }
-    if (updates.username) {
-      localDb.prepare('UPDATE users SET username = ? WHERE id = ?').run(updates.username, id);
-    }
-    if (updates.avatar) {
-      localDb.prepare('UPDATE users SET avatar = ? WHERE id = ?').run(updates.avatar, id);
-    }
+    queryLocal(ldb => {
+      if (updates.username) ldb.prepare('UPDATE users SET username = ? WHERE id = ?').run(updates.username, id);
+      if (updates.avatar) ldb.prepare('UPDATE users SET avatar = ? WHERE id = ?').run(updates.avatar, id);
+    });
     return this.getUserById(id);
   },
 
@@ -344,7 +359,7 @@ const db = {
         await supabase.from('users').update({ role }).eq('id', id);
       } catch (_) {}
     }
-    localDb.prepare('UPDATE users SET role = ? WHERE id = ?').run(role, id);
+    queryLocal(ldb => ldb.prepare('UPDATE users SET role = ? WHERE id = ?').run(role, id));
     return true;
   },
 
@@ -358,7 +373,7 @@ const db = {
         await supabase.from('users').update({ level: parsedLevel, xp: calculatedXp }).eq('id', id);
       } catch (_) {}
     }
-    localDb.prepare('UPDATE users SET level = ?, xp = ? WHERE id = ?').run(parsedLevel, calculatedXp, id);
+    queryLocal(ldb => ldb.prepare('UPDATE users SET level = ?, xp = ? WHERE id = ?').run(parsedLevel, calculatedXp, id));
     return { level: parsedLevel, xp: calculatedXp };
   },
 
@@ -373,14 +388,16 @@ const db = {
         }).eq('id', id);
       } catch (_) {}
     }
-    localDb.prepare(`
-      UPDATE users SET
-        xp = ?,
-        level = ?,
-        episodes_watched = ?,
-        watch_minutes = ?
-      WHERE id = ?
-    `).run(xp, level, episodes_watched, watch_minutes, id);
+    queryLocal(ldb => {
+      ldb.prepare(`
+        UPDATE users SET
+          xp = ?,
+          level = ?,
+          episodes_watched = ?,
+          watch_minutes = ?
+        WHERE id = ?
+      `).run(xp, level, episodes_watched, watch_minutes, id);
+    });
     return true;
   },
 
@@ -390,7 +407,7 @@ const db = {
         await supabase.from('users').delete().eq('id', id);
       } catch (_) {}
     }
-    localDb.prepare('DELETE FROM users WHERE id = ?').run(id);
+    queryLocal(ldb => ldb.prepare('DELETE FROM users WHERE id = ?').run(id));
     return true;
   },
 
@@ -404,7 +421,7 @@ const db = {
         if (!error && data) return data;
       } catch (_) {}
     }
-    return localDb.prepare('SELECT id, username, email, role, avatar, level, xp, created_at FROM users ORDER BY created_at DESC').all();
+    return queryLocal(ldb => ldb.prepare('SELECT id, username, email, role, avatar, level, xp, created_at FROM users ORDER BY created_at DESC').all(), []);
   },
 
   async countAdmins() {
@@ -417,7 +434,7 @@ const db = {
         if (!error && typeof count === 'number') return count;
       } catch (_) {}
     }
-    return localDb.prepare('SELECT COUNT(*) as count FROM users WHERE role = "admin"').get().count;
+    return queryLocal(ldb => ldb.prepare('SELECT COUNT(*) as count FROM users WHERE role = "admin"').get().count, 1);
   },
 
   async getAdminStats() {
@@ -440,13 +457,13 @@ const db = {
       } catch (_) {}
     }
 
-    return {
-      users: localDb.prepare('SELECT COUNT(*) as count FROM users').get().count,
-      history: localDb.prepare('SELECT COUNT(*) as count FROM history').get().count,
-      bookmarks: localDb.prepare('SELECT COUNT(*) as count FROM bookmarks').get().count,
-      customStreams: localDb.prepare('SELECT COUNT(*) as count FROM custom_streams').get().count,
-      comments: localDb.prepare('SELECT COUNT(*) as count FROM comments').get().count
-    };
+    return queryLocal(ldb => ({
+      users: ldb.prepare('SELECT COUNT(*) as count FROM users').get().count,
+      history: ldb.prepare('SELECT COUNT(*) as count FROM history').get().count,
+      bookmarks: ldb.prepare('SELECT COUNT(*) as count FROM bookmarks').get().count,
+      customStreams: ldb.prepare('SELECT COUNT(*) as count FROM custom_streams').get().count,
+      comments: ldb.prepare('SELECT COUNT(*) as count FROM comments').get().count
+    }), { users: 0, history: 0, bookmarks: 0, customStreams: 0, comments: 0 });
   },
 
   // HISTORY
@@ -461,7 +478,7 @@ const db = {
         if (!error && data) return data;
       } catch (_) {}
     }
-    return localDb.prepare('SELECT * FROM history WHERE user_id = ? ORDER BY updated_at DESC').all(userId);
+    return queryLocal(ldb => ldb.prepare('SELECT * FROM history WHERE user_id = ? ORDER BY updated_at DESC').all(userId), []);
   },
 
   async saveHistory(userId, data) {
@@ -482,33 +499,35 @@ const db = {
       } catch (_) {}
     }
 
-    const query = `
-      INSERT INTO history (
-        user_id, anime_id, anime_title, anime_image,
-        episode_num, episode_title, progress_seconds, duration_seconds, percentage, updated_at
-      )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-      ON CONFLICT(user_id, anime_id) DO UPDATE SET
-        anime_title = excluded.anime_title,
-        anime_image = excluded.anime_image,
-        episode_num = excluded.episode_num,
-        episode_title = excluded.episode_title,
-        progress_seconds = excluded.progress_seconds,
-        duration_seconds = excluded.duration_seconds,
-        percentage = excluded.percentage,
-        updated_at = CURRENT_TIMESTAMP
-    `;
-    localDb.prepare(query).run(
-      userId,
-      data.anime_id,
-      data.anime_title,
-      data.anime_image || '',
-      data.episode_num || 1,
-      data.episode_title || `Episode ${data.episode_num || 1}`,
-      data.progress_seconds || 0,
-      data.duration_seconds || 0,
-      data.percentage || 0
-    );
+    queryLocal(ldb => {
+      const query = `
+        INSERT INTO history (
+          user_id, anime_id, anime_title, anime_image,
+          episode_num, episode_title, progress_seconds, duration_seconds, percentage, updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(user_id, anime_id) DO UPDATE SET
+          anime_title = excluded.anime_title,
+          anime_image = excluded.anime_image,
+          episode_num = excluded.episode_num,
+          episode_title = excluded.episode_title,
+          progress_seconds = excluded.progress_seconds,
+          duration_seconds = excluded.duration_seconds,
+          percentage = excluded.percentage,
+          updated_at = CURRENT_TIMESTAMP
+      `;
+      ldb.prepare(query).run(
+        userId,
+        data.anime_id,
+        data.anime_title,
+        data.anime_image || '',
+        data.episode_num || 1,
+        data.episode_title || `Episode ${data.episode_num || 1}`,
+        data.progress_seconds || 0,
+        data.duration_seconds || 0,
+        data.percentage || 0
+      );
+    });
   },
 
   async deleteHistory(userId, animeId) {
@@ -517,7 +536,7 @@ const db = {
         await supabase.from('history').delete().match({ user_id: userId, anime_id: animeId });
       } catch (_) {}
     }
-    localDb.prepare('DELETE FROM history WHERE user_id = ? AND anime_id = ?').run(userId, animeId);
+    queryLocal(ldb => ldb.prepare('DELETE FROM history WHERE user_id = ? AND anime_id = ?').run(userId, animeId));
   },
 
   async clearHistory(userId) {
@@ -526,7 +545,7 @@ const db = {
         await supabase.from('history').delete().eq('user_id', userId);
       } catch (_) {}
     }
-    localDb.prepare('DELETE FROM history WHERE user_id = ?').run(userId);
+    queryLocal(ldb => ldb.prepare('DELETE FROM history WHERE user_id = ?').run(userId));
   },
 
   // BOOKMARKS
@@ -541,7 +560,7 @@ const db = {
         if (!error && data) return data;
       } catch (_) {}
     }
-    return localDb.prepare('SELECT * FROM bookmarks WHERE user_id = ? ORDER BY created_at DESC').all(userId);
+    return queryLocal(ldb => ldb.prepare('SELECT * FROM bookmarks WHERE user_id = ? ORDER BY created_at DESC').all(userId), []);
   },
 
   async addBookmark(userId, item) {
@@ -558,12 +577,12 @@ const db = {
       } catch (_) {}
     }
 
-    try {
-      localDb.prepare(`
+    queryLocal(ldb => {
+      ldb.prepare(`
         INSERT INTO bookmarks (user_id, anime_id, anime_title, anime_image, anime_type, anime_score)
         VALUES (?, ?, ?, ?, ?, ?)
       `).run(userId, item.anime_id, item.anime_title, item.anime_image || '', item.anime_type || 'TV', item.anime_score || 0);
-    } catch (_) {}
+    });
   },
 
   async deleteBookmark(userId, animeId) {
@@ -572,7 +591,7 @@ const db = {
         await supabase.from('bookmarks').delete().match({ user_id: userId, anime_id: animeId });
       } catch (_) {}
     }
-    localDb.prepare('DELETE FROM bookmarks WHERE user_id = ? AND anime_id = ?').run(userId, animeId);
+    queryLocal(ldb => ldb.prepare('DELETE FROM bookmarks WHERE user_id = ? AND anime_id = ?').run(userId, animeId));
   },
 
   // COMMENTS
@@ -605,7 +624,7 @@ const db = {
       } catch (_) {}
     }
 
-    return localDb.prepare(`
+    return queryLocal(ldb => ldb.prepare(`
       SELECT c.id, c.anime_id, c.episode_num, c.comment_text, c.created_at,
              u.id as user_id, u.username, u.role, u.avatar
       FROM comments c
@@ -613,7 +632,7 @@ const db = {
       WHERE c.anime_id = ?
       ORDER BY c.created_at DESC
       LIMIT ?
-    `).all(animeId, limit);
+    `).all(animeId, limit), []);
   },
 
   async addComment(userId, animeId, episodeNum, commentText) {
@@ -630,12 +649,13 @@ const db = {
       } catch (_) {}
     }
 
-    const res = localDb.prepare(`
-      INSERT INTO comments (user_id, anime_id, episode_num, comment_text)
-      VALUES (?, ?, ?, ?)
-    `).run(userId, animeId, episodeNum || 1, commentText);
-
-    return newId || res.lastInsertRowid;
+    return queryLocal(ldb => {
+      const res = ldb.prepare(`
+        INSERT INTO comments (user_id, anime_id, episode_num, comment_text)
+        VALUES (?, ?, ?, ?)
+      `).run(userId, animeId, episodeNum || 1, commentText);
+      return newId || res.lastInsertRowid;
+    }, newId || Date.now());
   },
 
   async getCommentById(id) {
@@ -645,7 +665,7 @@ const db = {
         if (!error && data) return data;
       } catch (_) {}
     }
-    return localDb.prepare('SELECT * FROM comments WHERE id = ?').get(id);
+    return queryLocal(ldb => ldb.prepare('SELECT * FROM comments WHERE id = ?').get(id), null);
   },
 
   async deleteComment(id) {
@@ -654,7 +674,7 @@ const db = {
         await supabase.from('comments').delete().eq('id', id);
       } catch (_) {}
     }
-    localDb.prepare('DELETE FROM comments WHERE id = ?').run(id);
+    queryLocal(ldb => ldb.prepare('DELETE FROM comments WHERE id = ?').run(id));
   },
 
   // ANNOUNCEMENTS
@@ -671,7 +691,7 @@ const db = {
         if (!error && data) return data;
       } catch (_) {}
     }
-    return localDb.prepare('SELECT * FROM announcements WHERE is_active = 1 ORDER BY created_at DESC LIMIT 1').get() || null;
+    return queryLocal(ldb => ldb.prepare('SELECT * FROM announcements WHERE is_active = 1 ORDER BY created_at DESC LIMIT 1').get(), null);
   },
 
   async getAllAnnouncements() {
@@ -681,7 +701,7 @@ const db = {
         if (!error && data) return data;
       } catch (_) {}
     }
-    return localDb.prepare('SELECT * FROM announcements ORDER BY created_at DESC').all();
+    return queryLocal(ldb => ldb.prepare('SELECT * FROM announcements ORDER BY created_at DESC').all(), []);
   },
 
   async createAnnouncement({ title, content, type, is_active }) {
@@ -691,7 +711,7 @@ const db = {
           await supabase.from('announcements').update({ is_active: 0 }).neq('id', 0);
         } catch (_) {}
       }
-      localDb.prepare('UPDATE announcements SET is_active = 0').run();
+      queryLocal(ldb => ldb.prepare('UPDATE announcements SET is_active = 0').run());
     }
 
     let insertId = null;
@@ -707,12 +727,13 @@ const db = {
       } catch (_) {}
     }
 
-    const res = localDb.prepare(`
-      INSERT INTO announcements (title, content, type, is_active)
-      VALUES (?, ?, ?, ?)
-    `).run(title, content, type || 'info', is_active ? 1 : 0);
-
-    return insertId || res.lastInsertRowid;
+    return queryLocal(ldb => {
+      const res = ldb.prepare(`
+        INSERT INTO announcements (title, content, type, is_active)
+        VALUES (?, ?, ?, ?)
+      `).run(title, content, type || 'info', is_active ? 1 : 0);
+      return insertId || res.lastInsertRowid;
+    }, insertId || Date.now());
   },
 
   async deleteAnnouncement(id) {
@@ -721,7 +742,7 @@ const db = {
         await supabase.from('announcements').delete().eq('id', id);
       } catch (_) {}
     }
-    localDb.prepare('DELETE FROM announcements WHERE id = ?').run(id);
+    queryLocal(ldb => ldb.prepare('DELETE FROM announcements WHERE id = ?').run(id));
   },
 
   // CUSTOM STREAMS
@@ -736,10 +757,12 @@ const db = {
       } catch (_) {}
     }
 
-    if (animeId !== null && episodeNum !== null) {
-      return localDb.prepare('SELECT * FROM custom_streams WHERE anime_id = ? AND episode_num = ? ORDER BY created_at DESC').all(animeId, episodeNum);
-    }
-    return localDb.prepare('SELECT * FROM custom_streams ORDER BY created_at DESC').all();
+    return queryLocal(ldb => {
+      if (animeId !== null && episodeNum !== null) {
+        return ldb.prepare('SELECT * FROM custom_streams WHERE anime_id = ? AND episode_num = ? ORDER BY created_at DESC').all(animeId, episodeNum);
+      }
+      return ldb.prepare('SELECT * FROM custom_streams ORDER BY created_at DESC').all();
+    }, []);
   },
 
   async addCustomStream(streamData) {
@@ -751,19 +774,20 @@ const db = {
       } catch (_) {}
     }
 
-    const res = localDb.prepare(`
-      INSERT INTO custom_streams (anime_id, episode_num, server_name, stream_type, video_url, quality)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `).run(
-      streamData.anime_id,
-      streamData.episode_num,
-      streamData.server_name,
-      streamData.stream_type || 'embed',
-      streamData.video_url,
-      streamData.quality || '1080p'
-    );
-
-    return id || res.lastInsertRowid;
+    return queryLocal(ldb => {
+      const res = ldb.prepare(`
+        INSERT INTO custom_streams (anime_id, episode_num, server_name, stream_type, video_url, quality)
+        VALUES (?, ?, ?, ?, ?, ?)
+      `).run(
+        streamData.anime_id,
+        streamData.episode_num,
+        streamData.server_name,
+        streamData.stream_type || 'embed',
+        streamData.video_url,
+        streamData.quality || '1080p'
+      );
+      return id || res.lastInsertRowid;
+    }, id || Date.now());
   },
 
   async deleteCustomStream(id) {
@@ -772,50 +796,65 @@ const db = {
         await supabase.from('custom_streams').delete().eq('id', id);
       } catch (_) {}
     }
-    localDb.prepare('DELETE FROM custom_streams WHERE id = ?').run(id);
+    queryLocal(ldb => ldb.prepare('DELETE FROM custom_streams WHERE id = ?').run(id));
   },
 
-  // CACHE (Fast local / sqlite)
+  // CACHE (Hybrid: SQLite local or In-Memory Map for Serverless)
   getCache(key) {
-    const row = localDb.prepare('SELECT value, expires_at FROM api_cache WHERE key = ?').get(key);
-    if (!row) return null;
-    if (Date.now() > row.expires_at) {
-      localDb.prepare('DELETE FROM api_cache WHERE key = ?').run(key);
+    if (localDb) {
+      try {
+        const row = localDb.prepare('SELECT value, expires_at FROM api_cache WHERE key = ?').get(key);
+        if (!row) return null;
+        if (Date.now() > row.expires_at) {
+          localDb.prepare('DELETE FROM api_cache WHERE key = ?').run(key);
+          return null;
+        }
+        return JSON.parse(row.value);
+      } catch (_) {}
+    }
+    const item = memoryCache.get(key);
+    if (!item) return null;
+    if (Date.now() > item.expiresAt) {
+      memoryCache.delete(key);
       return null;
     }
-    try {
-      return JSON.parse(row.value);
-    } catch (_) {
-      return null;
-    }
+    return item.value;
   },
 
   getStaleCache(key) {
-    const row = localDb.prepare('SELECT value FROM api_cache WHERE key = ?').get(key);
-    if (!row) return null;
-    try {
-      return JSON.parse(row.value);
-    } catch (_) {
-      return null;
+    if (localDb) {
+      try {
+        const row = localDb.prepare('SELECT value FROM api_cache WHERE key = ?').get(key);
+        if (row) return JSON.parse(row.value);
+      } catch (_) {}
     }
+    const item = memoryCache.get(key);
+    return item ? item.value : null;
   },
 
   setCache(key, value, ttlSeconds = 300) {
     const expiresAt = Date.now() + (ttlSeconds * 1000);
-    localDb.prepare(`
-      INSERT INTO api_cache (key, value, expires_at)
-      VALUES (?, ?, ?)
-      ON CONFLICT(key) DO UPDATE SET
-        value = excluded.value,
-        expires_at = excluded.expires_at
-    `).run(key, JSON.stringify(value), expiresAt);
+    if (localDb) {
+      try {
+        localDb.prepare(`
+          INSERT INTO api_cache (key, value, expires_at)
+          VALUES (?, ?, ?)
+          ON CONFLICT(key) DO UPDATE SET
+            value = excluded.value,
+            expires_at = excluded.expires_at
+        `).run(key, JSON.stringify(value), expiresAt);
+      } catch (_) {}
+    }
+    memoryCache.set(key, { value, expiresAt });
   },
 
   clearCache() {
-    localDb.prepare('DELETE FROM api_cache').run();
+    if (localDb) {
+      try { localDb.prepare('DELETE FROM api_cache').run(); } catch (_) {}
+    }
+    memoryCache.clear();
   },
 
-  // Raw helper for custom queries
   localDb
 };
 

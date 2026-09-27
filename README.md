@@ -2,6 +2,8 @@
 
 Platform streaming anime modern dengan antarmuka elegan, cepat, dan responsif. Dilengkapi fitur otentikasi user, bookmark/riwayat tontonan, komentar/reaksi komunitas, dan scraper multi-provider (Kuramanime & Otakudesu).
 
+![Nekumi Preview](public/images/preview.png)
+
 ---
 
 ## 🚀 Fitur Utama

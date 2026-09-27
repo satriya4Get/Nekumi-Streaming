@@ -25,7 +25,7 @@ Platform streaming anime modern dengan antarmuka elegan, cepat, dan responsif. D
 ## 🛠️ Tech Stack
 
 - **Backend**: Node.js, Express.js
-- **Database**: SQLite3 via `better-sqlite3`
+- **Database**: Supabase PostgreSQL API via `@supabase/server` & `@supabase/supabase-js`
 - **Scraper / Parsers**: Cheerio, Axios / Fetch
 - **Authentication**: JSON Web Token (JWT) & bcryptjs
 - **Email Service**: Resend SDK & Nodemailer (SMTP)

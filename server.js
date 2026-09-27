@@ -73,31 +73,14 @@ setInterval(() => {
 }, 900000);
 
 // -------------------------------------------------------------
-// CACHING HELPER (SQLite based, avoids Jikan API rate limits)
+// CACHING HELPER (Fast cache, avoids Jikan API rate limits)
 // -------------------------------------------------------------
 function getCached(key) {
-  const row = db.prepare('SELECT value, expires_at FROM api_cache WHERE key = ?').get(key);
-  if (row) {
-    if (Date.now() < row.expires_at) {
-      try {
-        return JSON.parse(row.value);
-      } catch (e) {
-        return null;
-      }
-    } else {
-      db.prepare('DELETE FROM api_cache WHERE key = ?').run(key);
-    }
-  }
-  return null;
+  return db.getCache(key);
 }
 
 function setCache(key, value, ttlSeconds = 1800) {
-  const expiresAt = Date.now() + ttlSeconds * 1000;
-  const str = JSON.stringify(value);
-  db.prepare(`
-    INSERT OR REPLACE INTO api_cache (key, value, expires_at)
-    VALUES (?, ?, ?)
-  `).run(key, str, expiresAt);
+  db.setCache(key, value, ttlSeconds);
 }
 
 // Helper to fetch Jikan with exponential backoff & fallback
@@ -117,8 +100,8 @@ async function fetchJikan(endpoint, ttl = 1800) {
 
     if (res.status === 429) {
       console.warn(`[Jikan 429 Rate Limit] on ${endpoint}. Checking stale cache...`);
-      const stale = db.prepare('SELECT value FROM api_cache WHERE key = ?').get(cacheKey);
-      if (stale) return JSON.parse(stale.value);
+      const stale = db.getStaleCache(cacheKey);
+      if (stale) return stale;
       throw new Error('Rate limited by Jikan API. Silakan coba beberapa saat lagi.');
     }
 
@@ -131,8 +114,8 @@ async function fetchJikan(endpoint, ttl = 1800) {
     return data;
   } catch (err) {
     console.error(`[Fetch error on ${endpoint}]:`, err.message);
-    const stale = db.prepare('SELECT value FROM api_cache WHERE key = ?').get(cacheKey);
-    if (stale) return JSON.parse(stale.value);
+    const stale = db.getStaleCache(cacheKey);
+    if (stale) return stale;
     throw err;
   }
 }
@@ -170,7 +153,7 @@ app.get('/api/proxy-image', async (req, res) => {
 // -------------------------------------------------------------
 // AUTH MIDDLEWARE
 // -------------------------------------------------------------
-function authenticate(req, res, next) {
+async function authenticate(req, res, next) {
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
     return res.status(401).json({ success: false, message: 'Akses ditolak. Token otorisasi tidak ditemukan.' });
@@ -179,11 +162,11 @@ function authenticate(req, res, next) {
   const token = authHeader.split(' ')[1];
   try {
     const decoded = jwt.verify(token, JWT_SECRET, { algorithms: ['HS256'] });
-    if (!decoded || typeof decoded.id !== 'number') {
+    if (!decoded || !decoded.id) {
       return res.status(401).json({ success: false, message: 'Format token otorisasi tidak valid.' });
     }
 
-    const user = db.prepare('SELECT id, username, email, role, avatar, level, xp, episodes_watched, watch_minutes FROM users WHERE id = ?').get(decoded.id);
+    const user = await db.getUserById(decoded.id);
     if (!user) {
       return res.status(401).json({ success: false, message: 'Akun pengguna tidak ditemukan atau telah dinonaktifkan.' });
     }
@@ -194,8 +177,8 @@ function authenticate(req, res, next) {
   }
 }
 
-function requireAdmin(req, res, next) {
-  authenticate(req, res, () => {
+async function requireAdmin(req, res, next) {
+  await authenticate(req, res, () => {
     if (!req.user || req.user.role !== 'admin') {
       return res.status(403).json({ success: false, message: 'Akses ditolak. Endpoint ini khusus untuk Administrator.' });
     }
@@ -281,7 +264,7 @@ app.get('/api/auth/captcha', (req, res) => {
 });
 
 // 2. Register Account with CAPTCHA
-app.post('/api/auth/register', (req, res) => {
+app.post('/api/auth/register', async (req, res) => {
   const ip = req.ip || req.socket.remoteAddress || 'unknown';
   const ipLimit = checkRateLimit(registerAttempts, `reg_ip:${ip}`, 10, 3600000, 3600000);
   if (!ipLimit.allowed) {
@@ -335,16 +318,27 @@ app.post('/api/auth/register', (req, res) => {
     const hashedPassword = bcrypt.hashSync(password, 10);
     const avatar = `https://api.dicebear.com/7.x/bottts/svg?seed=${encodeURIComponent(cleanUser)}`;
 
-    const result = db.prepare(`
-      INSERT INTO users (username, email, password, role, avatar, level, xp)
-      VALUES (?, ?, ?, 'user', ?, 1, 0)
-    `).run(cleanUser, cleanEmail, hashedPassword, avatar);
+    const existingUser = await db.getUserByUsername(cleanUser);
+    const existingEmail = await db.getUserByEmail(cleanEmail);
+    if (existingUser || existingEmail) {
+      return res.status(400).json({ success: false, message: 'Username atau Email sudah terdaftar. Silakan gunakan yang lain.' });
+    }
+
+    const newUser = await db.createUser({
+      username: cleanUser,
+      email: cleanEmail,
+      password: hashedPassword,
+      role: 'user',
+      avatar,
+      level: 1,
+      xp: 0
+    });
 
     recordFailure(registerAttempts, `reg_ip:${ip}`, 10, 3600000, 3600000);
 
-    const token = jwt.sign({ id: result.lastInsertRowid, role: 'user' }, JWT_SECRET, { expiresIn: '7d', algorithm: 'HS256' });
+    const token = jwt.sign({ id: newUser.id, role: 'user' }, JWT_SECRET, { expiresIn: '7d', algorithm: 'HS256' });
     const user = {
-      id: result.lastInsertRowid,
+      id: newUser.id,
       username: cleanUser,
       email: cleanEmail,
       role: 'user',
@@ -357,7 +351,7 @@ app.post('/api/auth/register', (req, res) => {
 
     return res.json({ success: true, message: 'Pendaftaran akun berhasil! Selamat datang di Nekumi.', token, user });
   } catch (err) {
-    if (err.message && err.message.includes('UNIQUE constraint failed')) {
+    if (err.message && (err.message.includes('UNIQUE') || err.message.includes('duplicate'))) {
       return res.status(400).json({ success: false, message: 'Username atau Email sudah terdaftar. Silakan gunakan yang lain.' });
     }
     return res.status(500).json({ success: false, message: 'Terjadi kesalahan sistem saat memproses pendaftaran.' });
@@ -365,7 +359,7 @@ app.post('/api/auth/register', (req, res) => {
 });
 
 // 3. Reset Password with CAPTCHA (Direct & Fast, No Email Waiting)
-app.post('/api/auth/reset-password', (req, res) => {
+app.post('/api/auth/reset-password', async (req, res) => {
   const { email, new_password, captcha_id, captcha_code } = req.body;
   if (!email || !new_password || !captcha_id || !captcha_code) {
     return res.status(400).json({ success: false, message: 'Harap lengkapi email, password baru, dan kode CAPTCHA.' });
@@ -392,13 +386,13 @@ app.post('/api/auth/reset-password', (req, res) => {
     return res.status(400).json({ success: false, message: 'Password baru minimal 6 dan maksimal 100 karakter.' });
   }
 
-  const user = db.prepare('SELECT id, username FROM users WHERE email = ?').get(cleanEmail);
+  const user = await db.getUserByEmail(cleanEmail);
   if (!user) {
     return res.status(404).json({ success: false, message: 'Email tidak ditemukan dalam sistem Nekumi.' });
   }
 
   const hashed = bcrypt.hashSync(new_password, 10);
-  db.prepare('UPDATE users SET password = ? WHERE email = ?').run(hashed, cleanEmail);
+  await db.updateUserPassword(cleanEmail, hashed);
 
   return res.json({
     success: true,
@@ -407,7 +401,7 @@ app.post('/api/auth/reset-password', (req, res) => {
 });
 
 // 5. User Login
-app.post('/api/auth/login', (req, res) => {
+app.post('/api/auth/login', async (req, res) => {
   const ip = req.ip || req.socket.remoteAddress || 'unknown';
 
   const { login, password } = req.body;
@@ -431,10 +425,7 @@ app.post('/api/auth/login', (req, res) => {
     return res.status(429).json({ success: false, message: `Akun ini terkunci sementara karena terlalu banyak percobaan salah. Silakan coba lagi dalam ${userLimit.waitSec} detik.` });
   }
 
-  // Parameterized query: 100% immune to SQL injection
-  const user = db.prepare(`
-    SELECT * FROM users WHERE email = ? OR username = ?
-  `).get(cleanLogin.toLowerCase(), cleanLogin);
+  const user = await db.getUserByEmailOrUsername(cleanLogin);
 
   // Timing attack defense: execute dummy hash compare if user doesn't exist
   const dummyHash = '$2a$10$777777777777777777777.7777777777777777777777777777777';
@@ -470,8 +461,9 @@ app.get('/api/auth/me', authenticate, (req, res) => {
   res.json({ success: true, user: req.user });
 });
 
-app.put('/api/auth/profile', authenticate, (req, res) => {
+app.put('/api/auth/profile', authenticate, async (req, res) => {
   const { username, avatar } = req.body;
+  const updates = {};
 
   if (username !== undefined) {
     if (typeof username !== 'string') {
@@ -486,11 +478,11 @@ app.put('/api/auth/profile', authenticate, (req, res) => {
       return res.status(400).json({ success: false, message: 'Username tersebut tidak diizinkan.' });
     }
 
-    const existing = db.prepare('SELECT id FROM users WHERE username = ? AND id != ?').get(cleanUser, req.user.id);
-    if (existing) {
+    const existing = await db.getUserByUsername(cleanUser);
+    if (existing && existing.id !== req.user.id) {
       return res.status(400).json({ success: false, message: 'Username sudah digunakan pengguna lain.' });
     }
-    db.prepare('UPDATE users SET username = ? WHERE id = ?').run(cleanUser, req.user.id);
+    updates.username = cleanUser;
   }
 
   if (avatar !== undefined) {
@@ -503,10 +495,10 @@ app.put('/api/auth/profile', authenticate, (req, res) => {
     if (cleanAvatar.length > 1000 || (!isSafeUrl && cleanAvatar.length > 0)) {
       return res.status(400).json({ success: false, message: 'URL avatar tidak aman atau terlalu panjang (maksimal 1000 karakter).' });
     }
-    db.prepare('UPDATE users SET avatar = ? WHERE id = ?').run(cleanAvatar, req.user.id);
+    updates.avatar = cleanAvatar;
   }
 
-  const updated = db.prepare('SELECT id, username, email, role, avatar, level, xp, episodes_watched, watch_minutes FROM users WHERE id = ?').get(req.user.id);
+  const updated = await db.updateUserProfile(req.user.id, updates);
   res.json({ success: true, message: 'Profil Nekumi berhasil diperbarui!', user: updated });
 });
 
@@ -806,14 +798,10 @@ app.get('/api/anime/:id/streams/:ep', async (req, res) => {
 
   const servers = [];
 
-  // 1. Check custom streams added by Admin in SQLite
+  // 1. Check custom streams added by Admin
   const numericId = parseInt(animeId);
   if (!isNaN(numericId)) {
-    const customStreams = db.prepare(`
-      SELECT id, server_name, stream_type, video_url, quality
-      FROM custom_streams
-      WHERE anime_id = ? AND episode_num = ?
-    `).all(numericId, ep);
+    const customStreams = await db.getCustomStreams(numericId, ep);
 
     customStreams.forEach(cs => {
       servers.push({
@@ -974,18 +962,17 @@ app.get('/api/kuramanime/anime/:id/:slug', async (req, res) => {
 // -------------------------------------------------------------
 
 // Ambil riwayat nonton pengguna
-app.get('/api/history', authenticate, (req, res) => {
-  const history = db.prepare(`
-    SELECT * FROM history
-    WHERE user_id = ?
-    ORDER BY updated_at DESC
-  `).all(req.user.id);
-
-  res.json({ success: true, data: history });
+app.get('/api/history', authenticate, async (req, res) => {
+  try {
+    const history = await db.getHistory(req.user.id);
+    res.json({ success: true, data: history });
+  } catch (err) {
+    res.status(500).json({ success: false, message: 'Gagal mengambil riwayat nonton.' });
+  }
 });
 
 // Simpan atau perbarui riwayat nonton
-app.post('/api/history', authenticate, (req, res) => {
+app.post('/api/history', authenticate, async (req, res) => {
   const {
     anime_id,
     anime_title,
@@ -1001,136 +988,114 @@ app.post('/api/history', authenticate, (req, res) => {
     return res.status(400).json({ success: false, message: 'ID dan Judul anime wajib ada.' });
   }
 
-  const query = `
-    INSERT INTO history (
-      user_id, anime_id, anime_title, anime_image,
-      episode_num, episode_title, progress_seconds, duration_seconds, percentage, updated_at
-    )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-    ON CONFLICT(user_id, anime_id) DO UPDATE SET
-      anime_title = excluded.anime_title,
-      anime_image = excluded.anime_image,
-      episode_num = excluded.episode_num,
-      episode_title = excluded.episode_title,
-      progress_seconds = excluded.progress_seconds,
-      duration_seconds = excluded.duration_seconds,
-      percentage = excluded.percentage,
-      updated_at = CURRENT_TIMESTAMP
-  `;
+  try {
+    await db.saveHistory(req.user.id, {
+      anime_id: parseAnimeId(anime_id),
+      anime_title,
+      anime_image: anime_image || '',
+      episode_num: parseInt(episode_num) || 1,
+      episode_title: episode_title || `Episode ${episode_num || 1}`,
+      progress_seconds: parseFloat(progress_seconds) || 0,
+      duration_seconds: parseFloat(duration_seconds) || 0,
+      percentage: parseFloat(percentage) || 0
+    });
 
-  db.prepare(query).run(
-    req.user.id,
-    parseAnimeId(anime_id),
-    anime_title,
-    anime_image || '',
-    parseInt(episode_num) || 1,
-    episode_title || `Episode ${episode_num || 1}`,
-    parseFloat(progress_seconds) || 0,
-    parseFloat(duration_seconds) || 0,
-    parseFloat(percentage) || 0
-  );
+    // Award Stream XP and Level progression
+    const xpReward = 35;
+    const currentStats = (await db.getUserById(req.user.id)) || {};
+    const oldLevel = currentStats.level || 1;
+    const newXp = (currentStats.xp || 0) + xpReward;
+    const newLevel = Math.max(1, Math.floor(newXp / 100) + 1);
+    const newMinutes = Math.round(((currentStats.watch_minutes || 0) + 0.5) * 10) / 10;
+    const newEpisodes = (currentStats.episodes_watched || 0) + 1;
 
-  // Award Stream XP and Level progression
-  const xpReward = 35;
-  const currentStats = db.prepare('SELECT level, xp, episodes_watched, watch_minutes FROM users WHERE id = ?').get(req.user.id) || {};
-  const oldLevel = currentStats.level || 1;
-  const newXp = (currentStats.xp || 0) + xpReward;
-  const newLevel = Math.max(1, Math.floor(newXp / 100) + 1);
-  const newMinutes = Math.round(((currentStats.watch_minutes || 0) + 0.5) * 10) / 10;
-  const newEpisodes = (currentStats.episodes_watched || 0) + 1;
-
-  db.prepare(`
-    UPDATE users SET
-      xp = ?,
-      level = ?,
-      episodes_watched = ?,
-      watch_minutes = ?
-    WHERE id = ?
-  `).run(newXp, newLevel, newEpisodes, newMinutes, req.user.id);
-
-  const leveledUp = newLevel > oldLevel;
-
-  res.json({
-    success: true,
-    message: 'Riwayat berhasil disimpan.',
-    stats: {
-      level: newLevel,
+    await db.updateUserStats(req.user.id, {
       xp: newXp,
-      xpGained: xpReward,
-      leveledUp
-    }
-  });
+      level: newLevel,
+      episodes_watched: newEpisodes,
+      watch_minutes: newMinutes
+    });
+
+    const leveledUp = newLevel > oldLevel;
+
+    res.json({
+      success: true,
+      message: 'Riwayat berhasil disimpan.',
+      stats: {
+        level: newLevel,
+        xp: newXp,
+        xpGained: xpReward,
+        leveledUp
+      }
+    });
+  } catch (err) {
+    console.error('[History Save Error]:', err);
+    res.status(500).json({ success: false, message: 'Gagal menyimpan riwayat.' });
+  }
 });
 
 // Hapus satu riwayat
-app.delete('/api/history/:anime_id', authenticate, (req, res) => {
+app.delete('/api/history/:anime_id', authenticate, async (req, res) => {
   const animeId = parseAnimeId(req.params.anime_id);
-  db.prepare('DELETE FROM history WHERE user_id = ? AND anime_id = ?').run(req.user.id, animeId);
+  await db.deleteHistory(req.user.id, animeId);
   res.json({ success: true, message: 'Riwayat berhasil dihapus.' });
 });
 
 // Bersihkan semua riwayat
-app.delete('/api/history', authenticate, (req, res) => {
-  db.prepare('DELETE FROM history WHERE user_id = ?').run(req.user.id);
+app.delete('/api/history', authenticate, async (req, res) => {
+  await db.clearHistory(req.user.id);
   res.json({ success: true, message: 'Semua riwayat berhasil dibersihkan.' });
 });
 
 // -------------------------------------------------------------
 // BOOKMARKS / FAVORIT WATCHLIST
 // -------------------------------------------------------------
-app.get('/api/bookmarks', authenticate, (req, res) => {
-  const bookmarks = db.prepare(`
-    SELECT * FROM bookmarks WHERE user_id = ? ORDER BY created_at DESC
-  `).all(req.user.id);
-  res.json({ success: true, data: bookmarks });
+app.get('/api/bookmarks', authenticate, async (req, res) => {
+  try {
+    const bookmarks = await db.getBookmarks(req.user.id);
+    res.json({ success: true, data: bookmarks });
+  } catch (err) {
+    res.status(500).json({ success: false, message: 'Gagal mengambil daftar favorit.' });
+  }
 });
 
-app.post('/api/bookmarks', authenticate, (req, res) => {
+app.post('/api/bookmarks', authenticate, async (req, res) => {
   const { anime_id, anime_title, anime_image, anime_type, anime_score } = req.body;
   if (!anime_id || !anime_title) {
     return res.status(400).json({ success: false, message: 'Data anime tidak lengkap.' });
   }
 
   try {
-    db.prepare(`
-      INSERT INTO bookmarks (user_id, anime_id, anime_title, anime_image, anime_type, anime_score)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `).run(req.user.id, parseAnimeId(anime_id), anime_title, anime_image || '', anime_type || 'TV', anime_score || 0);
+    await db.addBookmark(req.user.id, {
+      anime_id: parseAnimeId(anime_id),
+      anime_title,
+      anime_image: anime_image || '',
+      anime_type: anime_type || 'TV',
+      anime_score: anime_score || 0
+    });
 
     res.json({ success: true, message: 'Berhasil ditambahkan ke Favorit!' });
   } catch (err) {
-    if (err.message.includes('UNIQUE')) {
-      return res.json({ success: true, message: 'Anime sudah ada di Favorit.' });
-    }
     res.status(500).json({ success: false, message: 'Gagal menambahkan favorit.' });
   }
 });
 
-app.delete('/api/bookmarks/:anime_id', authenticate, (req, res) => {
+app.delete('/api/bookmarks/:anime_id', authenticate, async (req, res) => {
   const animeId = parseAnimeId(req.params.anime_id);
-  db.prepare('DELETE FROM bookmarks WHERE user_id = ? AND anime_id = ?').run(req.user.id, animeId);
+  await db.deleteBookmark(req.user.id, animeId);
   res.json({ success: true, message: 'Dihapus dari Favorit.' });
 });
 
 // -------------------------------------------------------------
 // COMMENTS / DISKUSI ANIME
 // -------------------------------------------------------------
-app.get('/api/comments/:anime_id', (req, res) => {
+app.get('/api/comments/:anime_id', async (req, res) => {
   const animeId = parseAnimeId(req.params.anime_id);
-  const comments = db.prepare(`
-    SELECT c.id, c.anime_id, c.episode_num, c.comment_text, c.created_at,
-           u.id as user_id, u.username, u.role, u.avatar
-    FROM comments c
-    JOIN users u ON c.user_id = u.id
-    WHERE c.anime_id = ?
-    ORDER BY c.created_at DESC
-    LIMIT 100
-  `).all(animeId);
-
+  const comments = await db.getComments(animeId, 100);
   res.json({ success: true, data: comments });
 });
 
-app.post('/api/comments/:anime_id', authenticate, (req, res) => {
+app.post('/api/comments/:anime_id', authenticate, async (req, res) => {
   const animeId = parseAnimeId(req.params.anime_id);
   const { comment_text, episode_num } = req.body;
 
@@ -1146,17 +1111,17 @@ app.post('/api/comments/:anime_id', authenticate, (req, res) => {
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
 
-  const result = db.prepare(`
-    INSERT INTO comments (user_id, anime_id, episode_num, comment_text)
-    VALUES (?, ?, ?, ?)
-  `).run(req.user.id, animeId, parseInt(episode_num) || 1, cleanComment);
-
-  res.json({ success: true, message: 'Komentar berhasil dikirim!', commentId: result.lastInsertRowid });
+  try {
+    const newId = await db.addComment(req.user.id, animeId, parseInt(episode_num) || 1, cleanComment);
+    res.json({ success: true, message: 'Komentar berhasil dikirim!', commentId: newId });
+  } catch (err) {
+    res.status(500).json({ success: false, message: 'Gagal mengirim komentar.' });
+  }
 });
 
-app.delete('/api/comments/:id', authenticate, (req, res) => {
+app.delete('/api/comments/:id', authenticate, async (req, res) => {
   const commentId = parseInt(req.params.id);
-  const comment = db.prepare('SELECT * FROM comments WHERE id = ?').get(commentId);
+  const comment = await db.getCommentById(commentId);
   if (!comment) {
     return res.status(404).json({ success: false, message: 'Komentar tidak ditemukan.' });
   }
@@ -1165,17 +1130,15 @@ app.delete('/api/comments/:id', authenticate, (req, res) => {
     return res.status(403).json({ success: false, message: 'Anda tidak memiliki hak untuk menghapus komentar ini.' });
   }
 
-  db.prepare('DELETE FROM comments WHERE id = ?').run(commentId);
+  await db.deleteComment(commentId);
   res.json({ success: true, message: 'Komentar berhasil dihapus.' });
 });
 
 // -------------------------------------------------------------
 // ANNOUNCEMENTS BANNER
 // -------------------------------------------------------------
-app.get('/api/announcements/active', (req, res) => {
-  const announcement = db.prepare(`
-    SELECT * FROM announcements WHERE is_active = 1 ORDER BY created_at DESC LIMIT 1
-  `).get();
+app.get('/api/announcements/active', async (req, res) => {
+  const announcement = await db.getActiveAnnouncement();
   res.json({ success: true, data: announcement || null });
 });
 
@@ -1184,35 +1147,30 @@ app.get('/api/announcements/active', (req, res) => {
 // -------------------------------------------------------------
 
 // Dashboard Stats
-app.get('/api/admin/stats', requireAdmin, (req, res) => {
-  const userCount = db.prepare('SELECT COUNT(*) as count FROM users').get().count;
-  const historyCount = db.prepare('SELECT COUNT(*) as count FROM history').get().count;
-  const bookmarkCount = db.prepare('SELECT COUNT(*) as count FROM bookmarks').get().count;
-  const streamCount = db.prepare('SELECT COUNT(*) as count FROM custom_streams').get().count;
-  const commentCount = db.prepare('SELECT COUNT(*) as count FROM comments').get().count;
-
-  res.json({
-    success: true,
-    stats: {
-      users: userCount,
-      history: historyCount,
-      bookmarks: bookmarkCount,
-      customStreams: streamCount,
-      comments: commentCount
-    }
-  });
+app.get('/api/admin/stats', requireAdmin, async (req, res) => {
+  try {
+    const stats = await db.getAdminStats();
+    res.json({
+      success: true,
+      stats
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, message: 'Gagal memuat statistik admin.' });
+  }
 });
 
 // User Management: List all users
-app.get('/api/admin/users', requireAdmin, (req, res) => {
-  const users = db.prepare(`
-    SELECT id, username, email, role, avatar, created_at FROM users ORDER BY created_at DESC
-  `).all();
-  res.json({ success: true, data: users });
+app.get('/api/admin/users', requireAdmin, async (req, res) => {
+  try {
+    const users = await db.getAllUsers();
+    res.json({ success: true, data: users });
+  } catch (err) {
+    res.status(500).json({ success: false, message: 'Gagal memuat daftar pengguna.' });
+  }
 });
 
 // User Management: Change role (admin <-> user)
-app.put('/api/admin/users/:id/role', requireAdmin, (req, res) => {
+app.put('/api/admin/users/:id/role', requireAdmin, async (req, res) => {
   const targetId = parseInt(req.params.id);
   const { role } = req.body;
 
@@ -1222,97 +1180,114 @@ app.put('/api/admin/users/:id/role', requireAdmin, (req, res) => {
 
   // Prevent admin from demoting self if they are the only admin
   if (targetId === req.user.id && role !== 'admin') {
-    const adminCount = db.prepare('SELECT COUNT(*) as count FROM users WHERE role = "admin"').get().count;
+    const adminCount = await db.countAdmins();
     if (adminCount <= 1) {
       return res.status(400).json({ success: false, message: 'Tidak dapat mencabut hak admin untuk akun Anda sendiri karena Anda adalah satu-satunya admin.' });
     }
   }
 
-  db.prepare('UPDATE users SET role = ? WHERE id = ?').run(role, targetId);
+  await db.updateUserRole(targetId, role);
   res.json({ success: true, message: `Role pengguna berhasil diubah menjadi ${role}.` });
 });
 
+// User Management: Set User Level (Admin feature)
+app.put('/api/admin/users/:id/level', requireAdmin, async (req, res) => {
+  const targetId = parseInt(req.params.id);
+  const { level, xp } = req.body;
+  const parsedLevel = parseInt(level, 10);
+
+  if (isNaN(parsedLevel) || parsedLevel < 1 || parsedLevel > 99999) {
+    return res.status(400).json({ success: false, message: 'Level harus berupa angka antara 1 dan 99999.' });
+  }
+
+  const targetUser = await db.getUserById(targetId);
+  if (!targetUser) {
+    return res.status(404).json({ success: false, message: 'Pengguna tidak ditemukan.' });
+  }
+
+  const result = await db.updateUserLevel(targetId, parsedLevel, xp);
+  res.json({
+    success: true,
+    message: `Level pengguna ${targetUser.username} berhasil diubah ke Level ${parsedLevel}!`,
+    data: result
+  });
+});
+
 // User Management: Delete user
-app.delete('/api/admin/users/:id', requireAdmin, (req, res) => {
+app.delete('/api/admin/users/:id', requireAdmin, async (req, res) => {
   const targetId = parseInt(req.params.id);
   if (targetId === req.user.id) {
     return res.status(400).json({ success: false, message: 'Anda tidak dapat menghapus akun Anda sendiri.' });
   }
 
-  db.prepare('DELETE FROM users WHERE id = ?').run(targetId);
+  await db.deleteUser(targetId);
   res.json({ success: true, message: 'Pengguna berhasil dihapus.' });
 });
 
 // Custom Streams Management: List all custom streams
-app.get('/api/admin/streams', requireAdmin, (req, res) => {
-  const streams = db.prepare('SELECT * FROM custom_streams ORDER BY created_at DESC').all();
+app.get('/api/admin/streams', requireAdmin, async (req, res) => {
+  const streams = await db.getCustomStreams();
   res.json({ success: true, data: streams });
 });
 
 // Custom Streams Management: Add custom stream URL
-app.post('/api/admin/streams', requireAdmin, (req, res) => {
+app.post('/api/admin/streams', requireAdmin, async (req, res) => {
   const { anime_id, episode_num, server_name, stream_type, video_url, quality } = req.body;
 
   if (!anime_id || !episode_num || !server_name || !video_url) {
     return res.status(400).json({ success: false, message: 'Harap lengkapi Anime ID, Episode, Nama Server, dan URL Video.' });
   }
 
-  const result = db.prepare(`
-    INSERT INTO custom_streams (anime_id, episode_num, server_name, stream_type, video_url, quality)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `).run(
-    parseAnimeId(anime_id),
-    parseInt(episode_num),
-    server_name.trim(),
-    stream_type || 'embed',
-    video_url.trim(),
-    quality || '1080p'
-  );
+  const newId = await db.addCustomStream({
+    anime_id: parseAnimeId(anime_id),
+    episode_num: parseInt(episode_num),
+    server_name: server_name.trim(),
+    stream_type: stream_type || 'embed',
+    video_url: video_url.trim(),
+    quality: quality || '1080p'
+  });
 
-  res.json({ success: true, message: 'Server streaming kustom berhasil ditambahkan!', id: result.lastInsertRowid });
+  res.json({ success: true, message: 'Server streaming kustom berhasil ditambahkan!', id: newId });
 });
 
 // Custom Streams Management: Delete stream
-app.delete('/api/admin/streams/:id', requireAdmin, (req, res) => {
+app.delete('/api/admin/streams/:id', requireAdmin, async (req, res) => {
   const streamId = parseInt(req.params.id);
-  db.prepare('DELETE FROM custom_streams WHERE id = ?').run(streamId);
+  await db.deleteCustomStream(streamId);
   res.json({ success: true, message: 'Server streaming berhasil dihapus.' });
 });
 
 // Announcements Management
-app.get('/api/admin/announcements', requireAdmin, (req, res) => {
-  const announcements = db.prepare('SELECT * FROM announcements ORDER BY created_at DESC').all();
+app.get('/api/admin/announcements', requireAdmin, async (req, res) => {
+  const announcements = await db.getAllAnnouncements();
   res.json({ success: true, data: announcements });
 });
 
-app.post('/api/admin/announcements', requireAdmin, (req, res) => {
+app.post('/api/admin/announcements', requireAdmin, async (req, res) => {
   const { title, content, type, is_active } = req.body;
   if (!title || !content) {
     return res.status(400).json({ success: false, message: 'Judul dan konten pengumuman wajib diisi.' });
   }
 
-  // Deactivate others if this is set to active
-  if (is_active) {
-    db.prepare('UPDATE announcements SET is_active = 0').run();
-  }
+  const newId = await db.createAnnouncement({
+    title: title.trim(),
+    content: content.trim(),
+    type: type || 'info',
+    is_active: is_active ? 1 : 0
+  });
 
-  const result = db.prepare(`
-    INSERT INTO announcements (title, content, type, is_active)
-    VALUES (?, ?, ?, ?)
-  `).run(title.trim(), content.trim(), type || 'info', is_active ? 1 : 0);
-
-  res.json({ success: true, message: 'Pengumuman berhasil dipublikasikan!', id: result.lastInsertRowid });
+  res.json({ success: true, message: 'Pengumuman berhasil dipublikasikan!', id: newId });
 });
 
-app.delete('/api/admin/announcements/:id', requireAdmin, (req, res) => {
+app.delete('/api/admin/announcements/:id', requireAdmin, async (req, res) => {
   const annId = parseInt(req.params.id);
-  db.prepare('DELETE FROM announcements WHERE id = ?').run(annId);
+  await db.deleteAnnouncement(annId);
   res.json({ success: true, message: 'Pengumuman berhasil dihapus.' });
 });
 
 // Clear Cache
 app.post('/api/admin/clear-cache', requireAdmin, (req, res) => {
-  db.prepare('DELETE FROM api_cache').run();
+  db.clearCache();
   res.json({ success: true, message: 'Cache API berhasil dibersihkan.' });
 });
 
@@ -1327,9 +1302,9 @@ app.use((req, res) => {
 // Start Server
 const server = app.listen(PORT, () => {
   console.log(`====================================================`);
-  console.log(`🚀 AniNonton Server running at http://localhost:${PORT}`);
-  console.log(`👤 Admin: admin@aninonton.com | Pass: admin123`);
-  console.log(`👤 User: user@aninonton.com  | Pass: user123`);
+  console.log(`🚀 NekumiStream Server running at http://localhost:${PORT}`);
+  console.log(`👤 Admin: Satriyaa (admin@nekumi.com) | Pass: Satriyaa1990#`);
+  console.log(`📦 Database: Supabase API (@supabase/server)`);
   console.log(`====================================================`);
 });
 

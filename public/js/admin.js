@@ -124,9 +124,18 @@ const Admin = {
               <td>
                 <span class="role-tag ${u.role === 'admin' ? 'admin' : ''}">${u.role.toUpperCase()}</span>
               </td>
+              <td>
+                <span class="badge" style="background:rgba(59,130,246,0.15); color:#60a5fa; font-weight:700; border:1px solid rgba(59,130,246,0.3); border-radius:6px; padding:3px 8px;">
+                  Lv. ${u.level || 1}
+                </span>
+                <small class="text-muted" style="display:block; font-size:11px; margin-top:2px;">${u.xp || 0} EXP</small>
+              </td>
               <td>${dateStr}</td>
               <td>
-                <div style="display:flex; gap:6px;">
+                <div style="display:flex; gap:6px; flex-wrap:wrap;">
+                  <button class="btn btn-xs btn-outline-info" onclick="Admin.setLevel(${u.id}, ${u.level || 1}, '${u.username}')" title="Atur Level Pengguna">
+                    ⚡ Set Level
+                  </button>
                   ${u.role === 'admin' ? `
                     <button class="btn btn-xs btn-outline" onclick="Admin.changeRole(${u.id}, 'user')" ${isCurrent ? 'disabled' : ''}>
                       Ubah ke User
@@ -148,7 +157,40 @@ const Admin = {
         }).join('');
       }
     } catch (err) {
-      tbody.innerHTML = `<tr><td colspan="6" class="text-danger">${err.message}</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="7" class="text-danger">${err.message}</td></tr>`;
+    }
+  },
+
+  async setLevel(userId, currentLevel, username) {
+    const input = prompt(`Masukkan level baru untuk "${username}" (angka 1 - 99999):`, currentLevel || 1);
+    if (input === null) return;
+
+    const newLevel = parseInt(input.trim(), 10);
+    if (isNaN(newLevel) || newLevel < 1 || newLevel > 99999) {
+      showToast('Level harus berupa angka antara 1 dan 99999.', 'error');
+      return;
+    }
+
+    const token = window.Auth.getToken();
+    try {
+      const res = await fetch(`/api/admin/users/${userId}/level`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ level: newLevel })
+      });
+      const data = await res.json();
+
+      if (data.success) {
+        showToast(data.message, 'success');
+        this.loadUsers();
+      } else {
+        throw new Error(data.message);
+      }
+    } catch (err) {
+      showToast(err.message, 'error');
     }
   },
 

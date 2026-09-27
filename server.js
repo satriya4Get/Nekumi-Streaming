@@ -202,6 +202,18 @@ function parseAnimeId(id) {
 }
 
 // -------------------------------------------------------------
+// HEALTH & ROOT API ENDPOINTS
+// -------------------------------------------------------------
+app.get(['/api', '/api/', '/api/index.js', '/api/health'], (req, res) => {
+  res.json({
+    success: true,
+    message: 'Nekumi Streaming API is online',
+    status: 'ready',
+    version: '2.0.0'
+  });
+});
+
+// -------------------------------------------------------------
 // AUTH ROUTES (SECURED AGAINST SQL/COMMAND/SCRIPT INJECTION & BRUTE FORCE)
 // -------------------------------------------------------------
 const FORBIDDEN_USERNAMES = new Set(['admin', 'administrator', 'root', 'system', 'moderator', 'nekumi', 'superuser', 'owner']);

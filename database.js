@@ -18,110 +18,127 @@ try {
 }
 
 // 2. Initialize Local SQLite as fallback & local cache
-const dbPath = path.join(__dirname, 'aninonton.db');
-const localDb = new Database(dbPath);
-localDb.pragma('journal_mode = WAL');
+let localDb = null;
+const isVercel = !!process.env.VERCEL;
 
-function initLocalDatabase() {
-  localDb.exec(`
-    CREATE TABLE IF NOT EXISTS users (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      username TEXT UNIQUE NOT NULL,
-      email TEXT UNIQUE NOT NULL,
-      password TEXT NOT NULL,
-      role TEXT NOT NULL DEFAULT 'user',
-      avatar TEXT DEFAULT '',
-      level INTEGER DEFAULT 1,
-      xp INTEGER DEFAULT 0,
-      episodes_watched INTEGER DEFAULT 0,
-      watch_minutes REAL DEFAULT 0,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    );
+function initLocalDatabase(dbInstance) {
+  if (!dbInstance) return;
+  try {
+    dbInstance.exec(`
+      CREATE TABLE IF NOT EXISTS users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        username TEXT UNIQUE NOT NULL,
+        email TEXT UNIQUE NOT NULL,
+        password TEXT NOT NULL,
+        role TEXT NOT NULL DEFAULT 'user',
+        avatar TEXT DEFAULT '',
+        level INTEGER DEFAULT 1,
+        xp INTEGER DEFAULT 0,
+        episodes_watched INTEGER DEFAULT 0,
+        watch_minutes REAL DEFAULT 0,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
 
-    CREATE TABLE IF NOT EXISTS history (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      user_id INTEGER NOT NULL,
-      anime_id INTEGER NOT NULL,
-      anime_title TEXT NOT NULL,
-      anime_image TEXT,
-      episode_num INTEGER NOT NULL DEFAULT 1,
-      episode_title TEXT,
-      progress_seconds REAL DEFAULT 0,
-      duration_seconds REAL DEFAULT 0,
-      percentage REAL DEFAULT 0,
-      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      UNIQUE(user_id, anime_id),
-      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-    );
+      CREATE TABLE IF NOT EXISTS history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        anime_id INTEGER NOT NULL,
+        anime_title TEXT NOT NULL,
+        anime_image TEXT,
+        episode_num INTEGER NOT NULL DEFAULT 1,
+        episode_title TEXT,
+        progress_seconds REAL DEFAULT 0,
+        duration_seconds REAL DEFAULT 0,
+        percentage REAL DEFAULT 0,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(user_id, anime_id),
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+      );
 
-    CREATE TABLE IF NOT EXISTS bookmarks (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      user_id INTEGER NOT NULL,
-      anime_id INTEGER NOT NULL,
-      anime_title TEXT NOT NULL,
-      anime_image TEXT,
-      anime_type TEXT DEFAULT 'TV',
-      anime_score REAL DEFAULT 0,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      UNIQUE(user_id, anime_id),
-      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-    );
+      CREATE TABLE IF NOT EXISTS bookmarks (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        anime_id INTEGER NOT NULL,
+        anime_title TEXT NOT NULL,
+        anime_image TEXT,
+        anime_type TEXT DEFAULT 'TV',
+        anime_score REAL DEFAULT 0,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(user_id, anime_id),
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+      );
 
-    CREATE TABLE IF NOT EXISTS custom_streams (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      anime_id INTEGER NOT NULL,
-      episode_num INTEGER NOT NULL,
-      server_name TEXT NOT NULL,
-      stream_type TEXT NOT NULL DEFAULT 'embed',
-      video_url TEXT NOT NULL,
-      quality TEXT DEFAULT '1080p',
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    );
+      CREATE TABLE IF NOT EXISTS custom_streams (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        anime_id INTEGER NOT NULL,
+        episode_num INTEGER NOT NULL,
+        server_name TEXT NOT NULL,
+        stream_type TEXT NOT NULL DEFAULT 'embed',
+        video_url TEXT NOT NULL,
+        quality TEXT DEFAULT '1080p',
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
 
-    CREATE TABLE IF NOT EXISTS comments (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      user_id INTEGER NOT NULL,
-      anime_id INTEGER NOT NULL,
-      episode_num INTEGER DEFAULT 1,
-      comment_text TEXT NOT NULL,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-    );
+      CREATE TABLE IF NOT EXISTS comments (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        anime_id INTEGER NOT NULL,
+        episode_num INTEGER DEFAULT 1,
+        comment_text TEXT NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+      );
 
-    CREATE TABLE IF NOT EXISTS announcements (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      title TEXT NOT NULL,
-      content TEXT NOT NULL,
-      type TEXT DEFAULT 'info',
-      is_active INTEGER DEFAULT 1,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    );
+      CREATE TABLE IF NOT EXISTS announcements (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        title TEXT NOT NULL,
+        content TEXT NOT NULL,
+        type TEXT DEFAULT 'info',
+        is_active INTEGER DEFAULT 1,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
 
-    CREATE TABLE IF NOT EXISTS api_cache (
-      key TEXT PRIMARY KEY,
-      value TEXT NOT NULL,
-      expires_at INTEGER NOT NULL
-    );
+      CREATE TABLE IF NOT EXISTS api_cache (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL,
+        expires_at INTEGER NOT NULL
+      );
 
-    CREATE TABLE IF NOT EXISTS email_verifications (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      email TEXT NOT NULL,
-      code TEXT NOT NULL,
-      expires_at INTEGER NOT NULL,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    );
+      CREATE TABLE IF NOT EXISTS email_verifications (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        email TEXT NOT NULL,
+        code TEXT NOT NULL,
+        expires_at INTEGER NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
 
-    CREATE TABLE IF NOT EXISTS password_resets (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      email TEXT NOT NULL,
-      code TEXT NOT NULL,
-      expires_at INTEGER NOT NULL,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    );
-  `);
+      CREATE TABLE IF NOT EXISTS password_resets (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        email TEXT NOT NULL,
+        code TEXT NOT NULL,
+        expires_at INTEGER NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+  } catch (e) {
+    console.warn('[DB Init Warning]:', e.message);
+  }
 }
 
-initLocalDatabase();
+try {
+  if (!isVercel) {
+    const dbPath = path.join(__dirname, 'aninonton.db');
+    localDb = new Database(dbPath);
+    localDb.pragma('journal_mode = WAL');
+    initLocalDatabase(localDb);
+  } else {
+    localDb = new Database(':memory:');
+    initLocalDatabase(localDb);
+    console.log('[DB] Vercel Serverless environment detected: in-memory DB ready.');
+  }
+} catch (err) {
+  console.warn('[DB Warning] Local SQLite initialization skipped:', err.message);
+}
 
 // 3. Admin Account Seeding helper (Ensures Satriyaa / Satriyaa1990# exists)
 const ADMIN_USERNAME = 'Satriyaa';

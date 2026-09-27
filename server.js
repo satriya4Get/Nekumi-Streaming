@@ -617,7 +617,8 @@ app.get('/api/anime/latest', async (req, res) => {
     const data = await fetchJikan(`/seasons/now?page=${page}&limit=24`, 1800);
     res.json({ success: true, data: data.data, pagination: data.pagination });
   } catch (err) {
-    res.status(500).json({ success: false, message: 'Gagal mengambil anime baru rilis.', error: err.message });
+    console.warn('[Latest Anime Jikan Fallback]: Returning spotlights fallback list');
+    res.json({ success: true, data: spotlights, pagination: { has_next_page: false, current_page: 1 } });
   }
 });
 
@@ -639,7 +640,8 @@ app.get('/api/anime/top-airing', async (req, res) => {
     const data = await fetchJikan('/top/anime?filter=airing&limit=12', 1800);
     res.json({ success: true, data: data.data });
   } catch (err) {
-    res.status(500).json({ success: false, message: 'Gagal mengambil top airing anime.', error: err.message });
+    console.warn('[Top Airing Jikan Fallback]: Returning spotlights');
+    res.json({ success: true, data: spotlights });
   }
 });
 
@@ -649,7 +651,8 @@ app.get('/api/anime/upcoming', async (req, res) => {
     const data = await fetchJikan('/seasons/upcoming?limit=12', 3600);
     res.json({ success: true, data: data.data });
   } catch (err) {
-    res.status(500).json({ success: false, message: 'Gagal mengambil anime upcoming.', error: err.message });
+    console.warn('[Upcoming Jikan Fallback]: Returning spotlights');
+    res.json({ success: true, data: spotlights });
   }
 });
 
@@ -770,8 +773,62 @@ app.get('/api/anime/:id', async (req, res) => {
     if (isNaN(id)) {
       return res.status(400).json({ success: false, message: 'ID Anime tidak valid.' });
     }
-    const data = await fetchJikan(`/anime/${id}/full`, 7200);
-    res.json({ success: true, data: data.data });
+
+    // 1. Try Jikan API
+    try {
+      const data = await fetchJikan(`/anime/${id}/full`, 7200);
+      if (data && data.data) {
+        return res.json({ success: true, data: data.data });
+      }
+    } catch (jikanErr) {
+      console.warn(`[Jikan Failed for anime ${id}]:`, jikanErr.message);
+    }
+
+    // 2. Fallback to spotlights if id matches (e.g. 51009 Jujutsu Kaisen, 52991 Frieren, etc.)
+    const spotlightItem = spotlights.find(s => s.mal_id === id);
+    if (spotlightItem) {
+      console.log(`[Anime Detail Fallback] Loaded spotlight data for anime ${id}: ${spotlightItem.title}`);
+      return res.json({ success: true, data: spotlightItem, source: 'spotlight_fallback' });
+    }
+
+    // 3. Fallback to stale cache
+    const stale = db.getStaleCache(`jikan_/anime/${id}/full`);
+    if (stale && stale.data) {
+      return res.json({ success: true, data: stale.data, source: 'cache_fallback' });
+    }
+
+    // 4. Fallback search via Otakudesu by query param title or ID
+    const titleHint = req.query.title;
+    if (titleHint) {
+      const otakuResults = await otakudesu.searchAnime(titleHint);
+      if (otakuResults && otakuResults.length > 0) {
+        const first = otakuResults[0];
+        const detail = await otakudesu.getAnimeDetail(first.slug);
+        if (detail) {
+          return res.json({
+            success: true,
+            data: {
+              mal_id: id,
+              title: detail.title,
+              synopsis: detail.synopsis,
+              images: {
+                webp: { image_url: detail.thumb, large_image_url: detail.thumb },
+                jpg: { image_url: detail.thumb, large_image_url: detail.thumb }
+              },
+              score: parseFloat(detail.score) || 8.0,
+              episodes: detail.totalEpisodes || detail.episodes?.length || 12,
+              status: detail.status,
+              genres: (detail.genres || []).map(g => ({ name: g })),
+              subIndo: true,
+              otakudesuEpisodes: detail.episodes || []
+            },
+            source: 'otakudesu_fallback'
+          });
+        }
+      }
+    }
+
+    res.status(404).json({ success: false, message: 'Data anime tidak ditemukan saat server MyAnimeList/Jikan sedang offline.' });
   } catch (err) {
     res.status(500).json({ success: false, message: 'Gagal mengambil detail anime.', error: err.message });
   }
@@ -783,11 +840,23 @@ app.get('/api/anime/:id/episodes', async (req, res) => {
     const id = parseInt(req.params.id);
     const page = parseInt(req.query.page) || 1;
     const data = await fetchJikan(`/anime/${id}/episodes?page=${page}`, 3600);
-    res.json({ success: true, data: data.data, pagination: data.pagination });
+    if (data && data.data && data.data.length > 0) {
+      return res.json({ success: true, data: data.data, pagination: data.pagination });
+    }
   } catch (err) {
-    // If episodes endpoint is empty or rate limited, return empty gracefully
-    res.json({ success: true, data: [], pagination: { has_next_page: false } });
+    console.warn(`[Episodes Jikan Fallback for ${req.params.id}]:`, err.message);
   }
+
+  // Generate episodes from spotlight or default 12/24 episodes
+  const spotlight = spotlights.find(s => s.mal_id === parseInt(req.params.id));
+  const totalEp = spotlight ? (spotlight.episodes || 12) : 12;
+  const generated = Array.from({ length: totalEp }, (_, i) => ({
+    mal_id: i + 1,
+    episode: i + 1,
+    title: `Episode ${i + 1}`,
+    aired: null
+  }));
+  res.json({ success: true, data: generated, pagination: { has_next_page: false, current_page: 1 } });
 });
 
 // 8. Stream Sources untuk Episode Tertentu (Multi-Server Player Engine with Otakudesu Sub Indo)
@@ -1299,20 +1368,22 @@ app.use((req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-// Start Server
-const server = app.listen(PORT, () => {
-  console.log(`====================================================`);
-  console.log(`🚀 NekumiStream Server running at http://localhost:${PORT}`);
-  console.log(`👤 Admin: Satriyaa (admin@nekumi.com) | Pass: Satriyaa1990#`);
-  console.log(`📦 Database: Supabase API (@supabase/server)`);
-  console.log(`====================================================`);
-});
+// Start Server (Only when not running in Vercel Serverless environment)
+if (!process.env.VERCEL) {
+  const server = app.listen(PORT, () => {
+    console.log(`====================================================`);
+    console.log(`🚀 NekumiStream Server running at http://localhost:${PORT}`);
+    console.log(`👤 Admin: Satriyaa (admin@nekumi.com) | Pass: Satriyaa1990#`);
+    console.log(`📦 Database: Supabase API (@supabase/server)`);
+    console.log(`====================================================`);
+  });
 
-server.on('error', (err) => {
-  console.error('[Server Error]:', err.message);
-});
+  server.on('error', (err) => {
+    console.error('[Server Error]:', err.message);
+  });
 
-// Keep event loop active
-setInterval(() => { }, 30000);
+  // Keep event loop active
+  setInterval(() => { }, 30000);
+}
 
 module.exports = app;

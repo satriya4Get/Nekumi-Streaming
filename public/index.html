@@ -1,0 +1,1179 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Nekumi • CinemaVision Streaming Anime</title>
+  <meta name="description" content="Nekumi - Platform streaming anime subtitle Indonesia kualitas HD Dolby Vision. Tonton anime populer terbaru gratis dengan multi-server cepat.">
+  <link rel="icon" type="image/png" href="/images/nekumi-logo.png">
+  
+  <!-- Google Fonts: SF Pro / Inter & Bricolage Grotesque -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@400;500;600;700;800;900&family=Inter:wght@300;400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.js"></script>
+
+  <!-- Tailwind CSS v3 CDN with Apple CinemaVision Pro Theme -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            appleBlue: { 500: '#007AFF', 600: '#0056CC' },
+            appleAmber: { 500: '#FF9500', 600: '#FF6B00' },
+            appleRose: { 500: '#FF2D55' }
+          },
+          fontFamily: {
+            sans: ['"Inter"', '"SF Pro Display"', '"Plus Jakarta Sans"', 'system-ui', 'sans-serif'],
+            bricolage: ['"Bricolage Grotesque"', 'sans-serif'],
+            heading: ['"Bricolage Grotesque"', 'sans-serif']
+          }
+        }
+      }
+    }
+  </script>
+
+  <!-- HLS.js for HLS (.m3u8) video streaming -->
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+
+  <!-- Main Stylesheet -->
+  <link rel="stylesheet" href="/css/style.css?v=9">
+</head>
+<body class="dark-theme text-white min-h-screen overflow-x-hidden">
+  <!-- Global Announcement Banner (Admin controllable) -->
+  <div id="announcementBanner" class="announcement-banner hidden">
+    <div class="container banner-inner">
+      <div class="banner-content">
+        <span class="banner-badge" id="announcementBadge">Pengumuman</span>
+        <span id="announcementText" class="banner-text">Memuat pengumuman...</span>
+      </div>
+      <button class="banner-close" id="closeBannerBtn" aria-label="Tutup Pengumuman">&times;</button>
+    </div>
+  </div>
+
+  <!-- Navigation Bar -->
+  <header class="navbar-header" id="navbar">
+    <div class="container navbar-container">
+      <!-- Logo -->
+      <a href="#" class="logo" id="logoLink">
+        <div class="logo-icon nekumi-logo-wrap">
+          <img src="/images/nekumi-logo.png" alt="Nekumi Logo" class="nekumi-logo-img">
+        </div>
+        <span class="logo-text">Nekumi<span class="logo-highlight">Stream</span></span>
+      </a>
+
+      <!-- Desktop Nav Links -->
+      <nav class="nav-menu">
+        <a href="#" class="nav-link active" data-view="home">Beranda</a>
+        <a href="#latest" class="nav-link" data-view="latest">Baru Rilis</a>
+        <a href="#popular" class="nav-link" data-view="popular">Populer</a>
+        <a href="#genres" class="nav-link" data-view="genres">Genre</a>
+        <a href="#history" class="nav-link auth-required-nav" data-view="history">
+          Riwayat
+          <span class="nav-counter" id="historyCounter" style="display:none;">0</span>
+        </a>
+        <a href="#watchlist" class="nav-link auth-required-nav" data-view="watchlist">
+          Favorit
+          <span class="nav-counter" id="bookmarkCounter" style="display:none;">0</span>
+        </a>
+      </nav>
+
+      <!-- Right Actions: Search & User Profile -->
+      <div class="nav-actions">
+        <!-- Search Trigger / Bar -->
+        <div class="search-box">
+          <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="11" cy="11" r="8"></circle>
+            <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+          </svg>
+          <input type="text" id="searchInput" placeholder="Cari judul anime..." autocomplete="off">
+          <button id="clearSearchBtn" class="clear-search-btn" style="display:none;">&times;</button>
+          
+          <!-- Live Search Autocomplete Popup -->
+          <div id="searchDropdown" class="search-dropdown"></div>
+        </div>
+
+        <!-- Auth Buttons (Guest) -->
+        <div id="guestNavGroup" class="auth-buttons">
+          <button class="btn btn-outline" id="openLoginBtn">Masuk</button>
+          <button class="btn btn-primary" id="openRegisterBtn">Daftar</button>
+        </div>
+
+        <!-- User Profile Dropdown (Logged In) -->
+        <div id="userNavGroup" class="user-profile-menu" style="display: none;">
+          <button class="user-avatar-btn" id="userMenuToggle">
+            <img id="navUserAvatar" src="" alt="Avatar" class="nav-user-avatar">
+            <span class="nav-level-pill" id="navUserLevel">Lv. 1</span>
+            <span class="user-name" id="navUserName">Pengguna</span>
+            <span class="role-tag" id="navUserRole">USER</span>
+            <svg class="dropdown-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="6 9 12 15 18 9"></polyline>
+            </svg>
+          </button>
+
+          <!-- Dropdown Popup -->
+          <div class="profile-dropdown-menu" id="userDropdownMenu">
+            <div class="dropdown-header">
+              <strong id="dropdownUserFull">User</strong>
+              <div class="dropdown-user-stats">
+                <span class="user-rank-tag" id="dropdownUserRank">🌱 Otaku Pemula</span>
+                <span class="user-xp-tag" id="dropdownUserXP">0 XP</span>
+              </div>
+              <small id="dropdownUserEmail">email@domain.com</small>
+            </div>
+            <div class="dropdown-divider"></div>
+            <button class="dropdown-item" id="menuItemProfile">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+                <circle cx="12" cy="7" r="4"></circle>
+              </svg>
+              Profil & Level Streamer
+            </button>
+            <a href="#history" class="dropdown-item" id="menuItemHistory">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="10"></circle>
+                <polyline points="12 6 12 12 16 14"></polyline>
+              </svg>
+              Riwayat Nonton
+            </a>
+            <a href="#watchlist" class="dropdown-item" id="menuItemWatchlist">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"></path>
+              </svg>
+              Daftar Favorit
+            </a>
+            <a href="#admin" class="dropdown-item admin-only" id="menuItemAdmin" style="display: none;">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M12 2L2 7l10 5 10-5-10-5z"></path>
+                <path d="M2 17l10 5 10-5"></path>
+                <path d="M2 12l10 5 10-5"></path>
+              </svg>
+              Panel Administrator
+            </a>
+            <div class="dropdown-divider"></div>
+            <button class="dropdown-item text-danger" id="logoutBtn">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
+                <polyline points="16 17 21 12 16 7"></polyline>
+                <line x1="21" y1="12" x2="9" y2="12"></line>
+              </svg>
+              Keluar (Logout)
+            </button>
+          </div>
+        </div>
+
+        <!-- Mobile Menu Toggle Button -->
+        <button class="mobile-toggle-btn" id="mobileMenuBtn" aria-label="Toggle Menu">
+          <span></span>
+          <span></span>
+          <span></span>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Mobile Drawer Menu -->
+  <div class="mobile-drawer" id="mobileDrawer">
+    <div class="mobile-drawer-links">
+      <a href="#" class="mobile-nav-link" data-view="home">Beranda</a>
+      <a href="#latest" class="mobile-nav-link" data-view="latest">Anime Baru Rilis</a>
+      <a href="#popular" class="mobile-nav-link" data-view="popular">Anime Populer</a>
+      <a href="#genres" class="mobile-nav-link" data-view="genres">Pilih Genre</a>
+      <a href="#history" class="mobile-nav-link auth-required-nav" data-view="history">Riwayat Nonton</a>
+      <a href="#watchlist" class="mobile-nav-link auth-required-nav" data-view="watchlist">Daftar Favorit</a>
+      <a href="#admin" class="mobile-nav-link admin-only" id="mobileAdminLink" style="display: none;">👑 Admin Panel</a>
+    </div>
+  </div>
+
+  <!-- MAIN APP CONTAINER -->
+  <main class="main-content">
+    
+    <!-- ==================== VIEW 1: HOME ==================== -->
+    <div id="view-home" class="view-section active">
+      
+      <!-- HERO SPOTLIGHT CAROUSEL -->
+      <section class="hero-section" id="heroSection">
+        <div class="hero-backdrop" id="heroBackdrop"></div>
+        <div class="hero-overlay"></div>
+
+        <div class="container hero-container">
+          <div class="hero-content animate-slide-right">
+            <div class="mb-5">
+              <span class="liquid-badge" id="heroBadge">POPULER</span>
+            </div>
+            
+            <h1 class="hero-title" id="heroTitle">Solo Leveling Season 2: Arise from the Shadow</h1>
+            <p class="hero-genres" id="heroGenres">Action • Fantasy • Supernatural</p>
+            <p class="hero-synopsis" id="heroSynopsis">
+              Sung Jinwoo memimpin pasukan bayangan dalam pertempuran tingkat tertinggi. Tonton kelanjutan kisah sang Shadow Monarch secara eksklusif dalam kualitas definisi tinggi.
+            </p>
+            
+            <div class="hero-actions">
+              <button class="apple-button px-7 py-3.5 rounded-2xl font-medium text-base flex items-center justify-center font-sans" id="heroWatchBtn">
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="currentColor" class="w-5 h-5 mr-2.5"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+                Tonton Sekarang
+              </button>
+              <button class="apple-glass hover:bg-white/10 transition-all duration-300 px-6 py-3.5 rounded-2xl font-medium text-base flex items-center justify-center font-sans text-white" id="heroDetailBtn">
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-5 h-5 mr-2.5"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
+                Detail Info
+              </button>
+              <button class="apple-glass hover:bg-white/10 transition-all duration-300 p-3.5 rounded-2xl font-medium flex items-center justify-center text-white" id="heroBookmarkBtn" title="Simpan ke Favorit">
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"></path></svg>
+              </button>
+            </div>
+
+            <!-- Apple Cinema Metadata Stats Row -->
+            <div class="flex items-center space-x-8 mt-10 pt-6 border-t border-white/10">
+              <div class="text-center">
+                <div class="text-2xl font-bold font-bricolage text-white" id="heroScore">⭐ 8.86</div>
+                <div class="text-xs text-white/60 font-sans mt-0.5">Rating MAL</div>
+              </div>
+              <div class="text-center">
+                <div class="text-2xl font-bold font-bricolage text-white" id="heroStatus">Ongoing</div>
+                <div class="text-xs text-white/60 font-sans mt-0.5">Status Tayang</div>
+              </div>
+              <div class="text-center">
+                <div class="text-2xl font-bold font-bricolage text-white" id="heroType">4K IMAX</div>
+                <div class="text-xs text-white/60 font-sans mt-0.5">Format Audio Visual</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Hero CinemaVision Liquid Glass Movie Card -->
+          <div class="hero-poster-wrapper animate-slide-left">
+            <div class="movie-card liquid-glass rounded-3xl overflow-hidden relative w-[280px] h-[400px]">
+              <img id="heroPoster" src="https://cdn.myanimelist.net/images/anime/1015/138006l.webp" alt="Poster Anime" class="w-full h-full object-cover" referrerpolicy="no-referrer" loading="eager">
+              <div class="absolute top-4 right-4 z-20">
+                <div class="liquid-badge text-xs">
+                  IMAX 70mm
+                </div>
+              </div>
+              <div class="absolute bottom-4 left-4 right-4 z-20 liquid-glass p-3 rounded-2xl">
+                <div class="flex items-center justify-between">
+                  <div class="flex items-center space-x-1 text-yellow-400 text-xs font-semibold">
+                    <span>⭐</span>
+                    <span class="text-white/90 font-medium text-xs ml-1" id="heroPosterScore">4.9 (14.2k)</span>
+                  </div>
+                  <span class="text-xs text-blue-400 font-semibold" id="heroPosterStatus">HD Sub Indo</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <div class="container">
+        <!-- CONTINUE WATCHING ROW (If user has watch history) -->
+        <section class="content-section" id="continueWatchingSection" style="display:none;">
+          <div class="section-header">
+            <div class="section-title-wrap">
+              <span class="section-icon">🕒</span>
+              <h2 class="section-title">Lanjutkan Menonton</h2>
+              <span class="section-subtitle">Tersimpan otomatis untuk Anda</span>
+            </div>
+            <a href="#history" class="view-all-link">Lihat Semua Riwayat &rarr;</a>
+          </div>
+          <div class="carousel-container">
+            <div class="anime-scroll-row" id="continueWatchingGrid"></div>
+          </div>
+        </section>
+
+        <!-- GENRE QUICK FILTER BAR -->
+        <section class="genre-filter-section">
+          <div class="genre-pills-wrap" id="homeGenrePills">
+            <button class="genre-pill active" data-genre="">Semua Genre</button>
+            <button class="genre-pill" data-genre="1">Action</button>
+            <button class="genre-pill" data-genre="2">Adventure</button>
+            <button class="genre-pill" data-genre="4">Comedy</button>
+            <button class="genre-pill" data-genre="8">Drama</button>
+            <button class="genre-pill" data-genre="10">Fantasy</button>
+            <button class="genre-pill" data-genre="62">Isekai</button>
+            <button class="genre-pill" data-genre="22">Romance</button>
+            <button class="genre-pill" data-genre="24">Sci-Fi</button>
+            <button class="genre-pill" data-genre="27">Shounen</button>
+            <button class="genre-pill" data-genre="36">Slice of Life</button>
+            <button class="genre-pill" data-genre="37">Supernatural</button>
+          </div>
+        </section>
+
+        <!-- SECTION: ANIME BARU RILIS (SEASON NOW) -->
+        <section class="content-section" id="latestReleaseSection">
+          <div class="section-header">
+            <div class="section-title-wrap">
+              <span class="section-icon">🚀</span>
+              <h2 class="section-title">Anime Baru Rilis (Musim Ini)</h2>
+              <span class="section-badge pulse-badge">Update Terbaru</span>
+            </div>
+            <a href="#latest" class="view-all-link">Lihat Semua &rarr;</a>
+          </div>
+          <div class="anime-grid" id="latestAnimeGrid">
+            <!-- Skeleton Loaders -->
+            <div class="anime-card-skeleton"></div>
+            <div class="anime-card-skeleton"></div>
+            <div class="anime-card-skeleton"></div>
+            <div class="anime-card-skeleton"></div>
+            <div class="anime-card-skeleton"></div>
+            <div class="anime-card-skeleton"></div>
+          </div>
+        </section>
+
+        <!-- SECTION: ANIME POPULER -->
+        <section class="content-section">
+          <div class="section-header">
+            <div class="section-title-wrap">
+              <span class="section-icon">🔥</span>
+              <h2 class="section-title">Anime Terpopuler</h2>
+              <span class="section-subtitle">Paling banyak ditonton pecinta anime</span>
+            </div>
+            <a href="#popular" class="view-all-link">Lihat Semua &rarr;</a>
+          </div>
+          <div class="anime-grid" id="popularAnimeGrid">
+            <div class="anime-card-skeleton"></div>
+            <div class="anime-card-skeleton"></div>
+            <div class="anime-card-skeleton"></div>
+            <div class="anime-card-skeleton"></div>
+            <div class="anime-card-skeleton"></div>
+            <div class="anime-card-skeleton"></div>
+          </div>
+        </section>
+
+        <!-- SECTION: TOP AIRING RANKING -->
+        <section class="content-section">
+          <div class="section-header">
+            <div class="section-title-wrap">
+              <span class="section-icon">🏆</span>
+              <h2 class="section-title">Top Airing Sedang Tayang</h2>
+              <span class="section-subtitle">Anime dengan rating tertinggi musim ini</span>
+            </div>
+          </div>
+          <div class="anime-grid" id="topAiringGrid">
+            <div class="anime-card-skeleton"></div>
+            <div class="anime-card-skeleton"></div>
+            <div class="anime-card-skeleton"></div>
+            <div class="anime-card-skeleton"></div>
+          </div>
+        </section>
+      </div>
+    </div>
+
+    <!-- ==================== VIEW 2: WATCH PLAYER PAGE ==================== -->
+    <div id="view-watch" class="view-section">
+      <div class="container watch-page-container">
+        
+        <!-- Breadcrumb & Back -->
+        <div class="watch-navigation-bar">
+          <button class="btn btn-glass btn-sm" id="watchBackBtn">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"></polyline></svg>
+            Kembali
+          </button>
+          <div class="watch-breadcrumb">
+            <span id="watchBreadcrumbTitle">Judul Anime</span> &bull; 
+            <span id="watchBreadcrumbEp" class="text-accent">Episode 1</span>
+          </div>
+          <div class="watch-top-actions">
+            <button class="btn btn-glass btn-sm" id="watchBookmarkBtn">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"></path></svg>
+              Favorit
+            </button>
+          </div>
+        </div>
+
+        <div class="watch-layout">
+          <!-- Left Column: Video Player & Controls -->
+          <div class="watch-main-column">
+            
+            <!-- CinemaVision Curved Screen Glow Indicator -->
+            <div class="mb-4">
+              <div id="screen" class="screen-glow relative h-3 max-w-4xl bg-gradient-to-r from-gray-400 via-white to-gray-400 rounded-full mx-auto mb-2 cursor-pointer transition-all duration-500 hover:scale-105" style="box-shadow: 0 0 24px rgba(255,255,255,0.3), inset 0 2px 0 rgba(255,255,255,0.8); background: linear-gradient(135deg, #d8d8d8 0%, #ffffff 30%, #f4f4f4 50%, #ffffff 70%, #d8d8d8 100%); border: 0.5px solid rgba(255,255,255,0.5);">
+                <div class="absolute inset-0 bg-gradient-to-r from-transparent via-blue-200/20 to-transparent rounded-full opacity-0 transition-opacity duration-300" id="screen-glow-effect"></div>
+              </div>
+              <div class="text-center text-white/50 text-xs font-medium tracking-widest uppercase">
+                <span id="screen-text">DOLBY VISION SCREEN • KLIK UNTUK EFEK TEATER</span>
+              </div>
+            </div>
+
+            <!-- Video Player Stage -->
+            <div class="video-player-wrapper" id="playerWrapper">
+              <!-- Multi-Server Notice / Loading Overlay -->
+              <div id="playerLoadingOverlay" class="player-loader hidden">
+                <div class="spinner"></div>
+                <p>Memuat Pemutar Video...</p>
+              </div>
+
+              <!-- IFRAME Embed Player Container (for Embed Servers) -->
+              <iframe id="embedPlayerFrame" class="video-frame" allowfullscreen allow="autoplay; fullscreen; encrypted-media"></iframe>
+
+              <!-- HTML5 & HLS Video Player (for MP4 and HLS m3u8 direct streams) -->
+              <div id="html5PlayerContainer" class="html5-player-container hidden">
+                <video id="html5VideoPlayer" class="video-element" controls playsinline preload="metadata"></video>
+              </div>
+
+              <!-- Fallback / Error Message Container -->
+              <div id="playerErrorOverlay" class="player-error hidden">
+                <div class="error-icon">⚠️</div>
+                <h3>Server Tidak Merespons</h3>
+                <p>Gunakan tombol server di bawah untuk beralih ke Server 2, Server Kustom VIP, atau Server Direct HD.</p>
+                <button class="btn btn-primary btn-sm" id="retryServerBtn">Ganti Server Otomatis</button>
+              </div>
+            </div>
+
+            <!-- Server Selector Bar -->
+            <div class="server-selector-card">
+              <div class="server-selector-header">
+                <div class="server-header-left">
+                  <span class="server-icon">📡</span>
+                  <strong>Pilih Server Streaming:</strong>
+                </div>
+                <div class="player-utility-toggles">
+                  <label class="toggle-switch-wrap" title="Otomatis putar episode berikutnya saat selesai">
+                    <input type="checkbox" id="autoNextToggle" checked>
+                    <span class="toggle-slider"></span>
+                    <span class="toggle-label">Auto-Next</span>
+                  </label>
+                  <label class="toggle-switch-wrap" title="Peredup lampu latar">
+                    <input type="checkbox" id="theaterLightToggle">
+                    <span class="toggle-slider"></span>
+                    <span class="toggle-label">Lampu Bioskop</span>
+                  </label>
+                </div>
+              </div>
+              <div class="server-buttons-list" id="serverListContainer">
+                <!-- Dynamically generated server buttons -->
+              </div>
+              <p class="server-hint-text">
+                💡 <em>Tips:</em> Jika salah satu server lambat atau buffering, klik server lain. Video yang ditonton akan tersimpan otomatis ke akun Anda.
+              </p>
+            </div>
+
+            <!-- Episode Quick Nav (Prev, Next, Mark Done) -->
+            <div class="episode-quick-nav">
+              <button class="btn btn-glass" id="prevEpisodeBtn" disabled>
+                &larr; Episode Sebelumnya
+              </button>
+              <div class="current-ep-pill" id="currentEpBadge">
+                Episode 1
+              </div>
+              <button class="btn btn-primary" id="nextEpisodeBtn">
+                Episode Selanjutnya &rarr;
+              </button>
+            </div>
+
+            <!-- Anime Detail Card below player -->
+            <div class="watch-anime-meta-card">
+              <div class="meta-card-top">
+                <img id="watchAnimePoster" src="" alt="Poster" class="meta-poster">
+                <div class="meta-info">
+                  <h1 class="meta-title" id="watchAnimeTitle">Memuat Anime...</h1>
+                  <p class="meta-alt-title" id="watchAnimeAltTitle">Japanese Title</p>
+                  <div class="meta-tags-row">
+                    <span class="badge badge-accent" id="watchAnimeStatus">Ongoing</span>
+                    <span class="badge badge-gold" id="watchAnimeScore">⭐ 8.5</span>
+                    <span class="badge badge-glass" id="watchAnimeYear">2026</span>
+                    <span class="badge badge-glass" id="watchAnimeEpisodesTotal">Total Ep: ?</span>
+                  </div>
+                  <div class="meta-genres" id="watchAnimeGenres"></div>
+                </div>
+              </div>
+              <div class="meta-synopsis-wrap">
+                <h3>Sinopsis Cerita</h3>
+                <p id="watchAnimeSynopsis" class="meta-synopsis-text"></p>
+              </div>
+            </div>
+
+            <!-- Comments & Discussion Section -->
+            <div class="comments-section-card">
+              <div class="comments-header">
+                <h3>💬 Diskusi & Komentar Penonton</h3>
+                <span class="comments-count" id="commentsCountBadge">0 Komentar</span>
+              </div>
+
+              <!-- Comment Form -->
+              <div class="comment-input-box" id="commentFormWrapper">
+                <textarea id="commentTextInput" placeholder="Tulis pendapat atau ulasan Anda tentang episode ini..." rows="3"></textarea>
+                <div class="comment-form-actions">
+                  <span class="comment-tip" id="commentUserNotice">Masuk untuk berkomentar</span>
+                  <button class="btn btn-primary btn-sm" id="submitCommentBtn">Kirim Komentar</button>
+                </div>
+              </div>
+
+              <!-- Comments List -->
+              <div class="comments-list" id="commentsList">
+                <p class="empty-comments">Belum ada komentar. Jadilah yang pertama memberikan ulasan!</p>
+              </div>
+            </div>
+
+          </div>
+
+          <!-- Right Column: Episodes Playlist Grid -->
+          <div class="watch-sidebar-column">
+            <div class="episodes-playlist-card">
+              <div class="playlist-header">
+                <div class="playlist-title-wrap">
+                  <span class="playlist-icon">📑</span>
+                  <h4>Daftar Episode</h4>
+                </div>
+                <span class="ep-count-pill" id="episodesTotalPill">0 Ep</span>
+              </div>
+
+              <!-- Search/filter episodes -->
+              <div class="episodes-search-box">
+                <input type="text" id="episodeSearchInput" placeholder="Cari episode (cth: 12)...">
+              </div>
+
+              <!-- Episodes Grid -->
+              <div class="episodes-buttons-grid" id="episodesButtonsGrid">
+                <!-- Ep 1, Ep 2, Ep 3 ... buttons generated by JS -->
+              </div>
+            </div>
+
+            <!-- Recommended Anime Sidebar -->
+            <div class="recommended-sidebar-card">
+              <h4>🔥 Rekomendasi Terkait</h4>
+              <div class="recommended-list" id="watchRecommendedList"></div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- ==================== VIEW 3: BARU RILIS (LATEST LIST) ==================== -->
+    <div id="view-latest" class="view-section">
+      <div class="container page-content-container">
+        <div class="page-title-header">
+          <div>
+            <h1 class="page-main-title">🚀 Anime Baru Rilis (Musim Ini)</h1>
+            <p class="page-description">Daftar anime yang sedang tayang dengan jadwal update episode terbaru.</p>
+          </div>
+          <div class="page-filter-actions">
+            <select id="latestSortSelect" class="custom-select">
+              <option value="popularity">Urutkan: Terpopuler</option>
+              <option value="score">Urutkan: Rating Tertinggi</option>
+            </select>
+          </div>
+        </div>
+        <div class="anime-grid" id="allLatestGrid"></div>
+        <div class="pagination-wrapper">
+          <button class="btn btn-glass" id="latestPrevPageBtn" disabled>&larr; Sebelumnya</button>
+          <span class="pagination-page-indicator" id="latestPageIndicator">Halaman 1</span>
+          <button class="btn btn-primary" id="latestNextPageBtn">Berikutnya &rarr;</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ==================== VIEW 4: POPULER (POPULAR LIST) ==================== -->
+    <div id="view-popular" class="view-section">
+      <div class="container page-content-container">
+        <div class="page-title-header">
+          <div>
+            <h1 class="page-main-title">🔥 Anime Paling Populer Sepanjang Masa</h1>
+            <p class="page-description">Peringkat anime terfavorit berdasarkan jumlah penggemar dan review global.</p>
+          </div>
+        </div>
+        <div class="anime-grid" id="allPopularGrid"></div>
+        <div class="pagination-wrapper">
+          <button class="btn btn-glass" id="popularPrevPageBtn" disabled>&larr; Sebelumnya</button>
+          <span class="pagination-page-indicator" id="popularPageIndicator">Halaman 1</span>
+          <button class="btn btn-primary" id="popularNextPageBtn">Berikutnya &rarr;</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ==================== VIEW 5: GENRE BROWSER ==================== -->
+    <div id="view-genres" class="view-section">
+      <div class="container page-content-container">
+        <div class="page-title-header">
+          <div>
+            <h1 class="page-main-title">🏷️ Jelajahi Anime Berdasarkan Genre</h1>
+            <p class="page-description">Temukan anime favoritmu mulai dari Action, Isekai, Romance, hingga Shounen.</p>
+          </div>
+        </div>
+
+        <!-- Full Genre Badges Grid -->
+        <div class="all-genres-badges-grid" id="allGenresList">
+          <!-- Genre tags loaded by JS -->
+        </div>
+
+        <div class="genre-results-header">
+          <h3 id="currentGenreLabel">Menampilkan Semua Anime</h3>
+          <span id="genreCountResult" class="text-muted"></span>
+        </div>
+
+        <div class="anime-grid" id="genreAnimeGrid"></div>
+        
+        <div class="pagination-wrapper" id="genrePagination" style="display:none;">
+          <button class="btn btn-glass" id="genrePrevBtn" disabled>&larr; Sebelumnya</button>
+          <span class="pagination-page-indicator" id="genrePageIndicator">Halaman 1</span>
+          <button class="btn btn-primary" id="genreNextBtn">Berikutnya &rarr;</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ==================== VIEW 6: SEARCH RESULTS ==================== -->
+    <div id="view-search" class="view-section">
+      <div class="container page-content-container">
+        <div class="page-title-header">
+          <div>
+            <h1 class="page-main-title">🔍 Hasil Pencarian: "<span id="searchQueryLabel"></span>"</h1>
+            <p class="page-description" id="searchCountDescription">Ditemukan hasil anime yang cocok.</p>
+          </div>
+        </div>
+        <div class="anime-grid" id="searchResultsGrid"></div>
+      </div>
+    </div>
+
+    <!-- ==================== VIEW 7: RIWAYAT NONTON (WATCH HISTORY) ==================== -->
+    <div id="view-history" class="view-section">
+      <div class="container page-content-container">
+        <div class="page-title-header">
+          <div>
+            <h1 class="page-main-title">🕒 Riwayat Nonton Anda</h1>
+            <p class="page-description">Daftar episode yang telah Anda tonton. Progres tersimpan secara otomatis.</p>
+          </div>
+          <button class="btn btn-outline-danger btn-sm" id="clearAllHistoryBtn">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+            Hapus Semua Riwayat
+          </button>
+        </div>
+
+        <!-- History Items Grid -->
+        <div class="history-list-grid" id="userHistoryList">
+          <div class="empty-state-card">
+            <div class="empty-state-icon">📺</div>
+            <h3>Belum Ada Riwayat Nonton</h3>
+            <p>Mulai tonton episode anime untuk melihat daftar riwayat di sini.</p>
+            <a href="#" class="btn btn-primary" data-view="home">Mulai Menonton</a>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ==================== VIEW 8: FAVORIT (WATCHLIST) ==================== -->
+    <div id="view-watchlist" class="view-section">
+      <div class="container page-content-container">
+        <div class="page-title-header">
+          <div>
+            <h1 class="page-main-title">⭐ Daftar Tontonan Favorit</h1>
+            <p class="page-description">Koleksi anime yang Anda simpan untuk ditonton kapan saja.</p>
+          </div>
+        </div>
+        <div class="anime-grid" id="userWatchlistGrid">
+          <div class="empty-state-card">
+            <div class="empty-state-icon">🔖</div>
+            <h3>Daftar Favorit Masih Kosong</h3>
+            <p>Klik tombol favorit pada anime pilihan Anda untuk menyimpannya di sini.</p>
+            <a href="#" class="btn btn-primary" data-view="home">Jelajahi Anime</a>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ==================== VIEW 9: ADMIN PANEL (ROLE ADMIN) ==================== -->
+    <div id="view-admin" class="view-section">
+      <div class="container admin-dashboard-container">
+        <div class="admin-header-bar">
+          <div>
+            <span class="admin-badge-gold">👑 ADMINISTRATOR AREA</span>
+            <h1 class="admin-dashboard-title">Panel Kontrol AniNonton</h1>
+            <p class="text-muted">Kelola pengguna, server streaming kustom, pengumuman situs, dan performa database.</p>
+          </div>
+          <div class="admin-header-actions">
+            <button class="btn btn-outline btn-sm" id="adminRefreshStatsBtn">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 4v6h-6"></path><path d="M1 20v-6h6"></path><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
+              Segarkan Data
+            </button>
+            <button class="btn btn-warning btn-sm" id="adminClearCacheBtn">
+              🧹 Bersihkan Cache API
+            </button>
+          </div>
+        </div>
+
+        <!-- Admin Stats Counters -->
+        <div class="admin-stats-grid">
+          <div class="stat-card">
+            <div class="stat-icon icon-users">👥</div>
+            <div class="stat-data">
+              <span class="stat-number" id="statUsersCount">0</span>
+              <span class="stat-label">Total Pengguna</span>
+            </div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-icon icon-history">🕒</div>
+            <div class="stat-data">
+              <span class="stat-number" id="statHistoryCount">0</span>
+              <span class="stat-label">Riwayat Ditonton</span>
+            </div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-icon icon-bookmarks">⭐</div>
+            <div class="stat-data">
+              <span class="stat-number" id="statBookmarksCount">0</span>
+              <span class="stat-label">Anime Difavoritkan</span>
+            </div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-icon icon-streams">📡</div>
+            <div class="stat-data">
+              <span class="stat-number" id="statStreamsCount">0</span>
+              <span class="stat-label">Server Kustom Aktif</span>
+            </div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-icon icon-comments">💬</div>
+            <div class="stat-data">
+              <span class="stat-number" id="statCommentsCount">0</span>
+              <span class="stat-label">Diskusi & Komentar</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Admin Management Tabs -->
+        <div class="admin-tabs-nav">
+          <button class="admin-tab-btn active" data-admintab="users">
+            👥 Kelola Pengguna & Role
+          </button>
+          <button class="admin-tab-btn" data-admintab="streams">
+            📡 Tambah Server Video Kustom
+          </button>
+          <button class="admin-tab-btn" data-admintab="announcements">
+            📢 Kelola Pengumuman Banner
+          </button>
+        </div>
+
+        <!-- TAB 1: USERS MANAGEMENT -->
+        <div id="admintab-users" class="admin-tab-pane active">
+          <div class="admin-card">
+            <div class="admin-card-header">
+              <h3>Daftar Seluruh Pengguna Terdaftar</h3>
+              <span class="text-muted">Ubah hak akses role (Admin / User) atau hapus akun pengguna.</span>
+            </div>
+            <div class="table-responsive">
+              <table class="admin-table">
+                <thead>
+                  <tr>
+                    <th>ID</th>
+                    <th>Avatar & Username</th>
+                    <th>Email</th>
+                    <th>Role Saat Ini</th>
+                    <th>Tanggal Daftar</th>
+                    <th>Aksi Pengelolaan</th>
+                  </tr>
+                </thead>
+                <tbody id="adminUsersTableBody">
+                  <!-- Generated by JS -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- TAB 2: CUSTOM STREAM SERVERS MANAGEMENT -->
+        <div id="admintab-streams" class="admin-tab-pane">
+          <div class="admin-grid-2col">
+            <!-- Add New Stream Server Form -->
+            <div class="admin-card">
+              <div class="admin-card-header">
+                <h3>Tambah Server Video Episode Baru</h3>
+                <span class="text-muted">Masukkan link streaming langsung (MP4/M3U8) atau Iframe Embed kustom.</span>
+              </div>
+              <form id="addStreamForm" class="admin-form">
+                <div class="form-group">
+                  <label for="streamAnimeId">Anime ID (MAL ID):</label>
+                  <input type="number" id="streamAnimeId" placeholder="Contoh: 21 (One Piece), 16498 (AOT)" required>
+                  <small class="form-hint">Cek ID di URL anime pada website ini atau MyAnimeList.</small>
+                </div>
+                <div class="form-row">
+                  <div class="form-group flex-1">
+                    <label for="streamEpisodeNum">Nomor Episode:</label>
+                    <input type="number" id="streamEpisodeNum" value="1" min="1" required>
+                  </div>
+                  <div class="form-group flex-1">
+                    <label for="streamQuality">Kualitas:</label>
+                    <select id="streamQuality" class="custom-select">
+                      <option value="1080p">1080p Full HD</option>
+                      <option value="720p">720p HD</option>
+                      <option value="480p">480p SD</option>
+                      <option value="Auto">Auto Adaptive</option>
+                    </select>
+                  </div>
+                </div>
+                <div class="form-group">
+                  <label for="streamServerName">Nama Server (Label Tampilan):</label>
+                  <input type="text" id="streamServerName" placeholder="Contoh: Server VIP Super HD" required>
+                </div>
+                <div class="form-group">
+                  <label for="streamType">Tipe Video Stream:</label>
+                  <select id="streamType" class="custom-select">
+                    <option value="mp4">Direct MP4 Video (.mp4)</option>
+                    <option value="hls">HLS Adaptive Stream (.m3u8)</option>
+                    <option value="embed">Iframe Video Embed (URL)</option>
+                  </select>
+                </div>
+                <div class="form-group">
+                  <label for="streamVideoUrl">URL Video / Embed:</label>
+                  <input type="url" id="streamVideoUrl" placeholder="https://domain.com/video.mp4 atau https://.../embed/..." required>
+                </div>
+                <button type="submit" class="btn btn-primary btn-block">
+                  Simpan Server Streaming
+                </button>
+              </form>
+            </div>
+
+            <!-- Existing Streams List -->
+            <div class="admin-card">
+              <div class="admin-card-header">
+                <h3>Daftar Server Kustom Aktif</h3>
+                <span class="text-muted">Server kustom akan tampil prioritas utama pada player anime.</span>
+              </div>
+              <div class="table-responsive">
+                <table class="admin-table">
+                  <thead>
+                    <tr>
+                      <th>Anime ID</th>
+                      <th>Ep</th>
+                      <th>Nama Server</th>
+                      <th>Tipe</th>
+                      <th>Aksi</th>
+                    </tr>
+                  </thead>
+                  <tbody id="adminStreamsTableBody">
+                    <!-- Loaded by JS -->
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- TAB 3: ANNOUNCEMENTS MANAGEMENT -->
+        <div id="admintab-announcements" class="admin-tab-pane">
+          <div class="admin-grid-2col">
+            <div class="admin-card">
+              <div class="admin-card-header">
+                <h3>Buat Pengumuman Baru</h3>
+                <span class="text-muted">Akan langsung muncul sebagai banner atas untuk semua pengunjung.</span>
+              </div>
+              <form id="addAnnouncementForm" class="admin-form">
+                <div class="form-group">
+                  <label for="announcementTitleInput">Judul Pengumuman:</label>
+                  <input type="text" id="announcementTitleInput" placeholder="Contoh: 🎉 Update Server Nonton!" required>
+                </div>
+                <div class="form-group">
+                  <label for="announcementContentInput">Isi Pengumuman:</label>
+                  <textarea id="announcementContentInput" rows="4" placeholder="Tuliskan pesan lengkap untuk para penonton..." required></textarea>
+                </div>
+                <div class="form-row">
+                  <div class="form-group flex-1">
+                    <label for="announcementTypeInput">Jenis Notifikasi:</label>
+                    <select id="announcementTypeInput" class="custom-select">
+                      <option value="info">Info (Biru Neon)</option>
+                      <option value="success">Success (Hijau Neon)</option>
+                      <option value="warning">Warning (Oranye/Kuning)</option>
+                    </select>
+                  </div>
+                  <div class="form-group flex-1">
+                    <label>Status Banner:</label>
+                    <label class="toggle-switch-wrap mt-2">
+                      <input type="checkbox" id="announcementActiveInput" checked>
+                      <span class="toggle-slider"></span>
+                      <span class="toggle-label">Langsung Aktifkan</span>
+                    </label>
+                  </div>
+                </div>
+                <button type="submit" class="btn btn-primary btn-block">Publikasikan Pengumuman</button>
+              </form>
+            </div>
+
+            <!-- Existing Announcements List -->
+            <div class="admin-card">
+              <div class="admin-card-header">
+                <h3>Riwayat Pengumuman</h3>
+              </div>
+              <div class="table-responsive">
+                <table class="admin-table">
+                  <thead>
+                    <tr>
+                      <th>Judul</th>
+                      <th>Tipe</th>
+                      <th>Status</th>
+                      <th>Aksi</th>
+                    </tr>
+                  </thead>
+                  <tbody id="adminAnnouncementsTableBody"></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+  </main>
+
+  <!-- ==================== AUTH MODAL (LOGIN & REGISTER) ==================== -->
+  <div class="modal-backdrop" id="authModalBackdrop">
+    <div class="modal-dialog auth-modal-dialog">
+      <button class="modal-close-btn" id="closeAuthModalBtn">&times;</button>
+      
+      <!-- Modal Tabs: Masuk vs Daftar -->
+      <div class="auth-tabs">
+        <button class="auth-tab-btn active" id="tabLoginBtn">Masuk Akun</button>
+        <button class="auth-tab-btn" id="tabRegisterBtn">Daftar Akun Baru</button>
+      </div>
+
+      <!-- LOGIN FORM -->
+      <form id="loginForm" class="auth-form-content">
+        <div class="form-group">
+          <label for="loginIdentifier">Username atau Email:</label>
+          <input type="text" id="loginIdentifier" placeholder="Masukkan username atau email" required>
+        </div>
+        <div class="form-group">
+          <div class="form-label-row">
+            <label for="loginPassword">Password:</label>
+            <a href="#" id="openForgotPasswordLink" class="auth-link-sm">Lupa Password?</a>
+          </div>
+          <input type="password" id="loginPassword" placeholder="Masukkan password" required>
+        </div>
+        <button type="submit" class="btn btn-primary btn-block btn-lg" id="submitLoginBtn">
+          Masuk Sekarang
+        </button>
+        <p class="auth-switch-text">
+          Belum punya akun? <a href="#" id="switchToRegisterLink">Daftar gratis di sini</a>
+        </p>
+      </form>
+
+      <!-- REGISTER FORM (WITH CAPTCHA) -->
+      <form id="registerForm" class="auth-form-content hidden">
+        <div class="form-group">
+          <label for="regUsername">Username:</label>
+          <input type="text" id="regUsername" placeholder="Contoh: narutolovers" required>
+        </div>
+        <div class="form-group">
+          <label for="regEmail">Email:</label>
+          <input type="email" id="regEmail" placeholder="nama@email.com" required>
+        </div>
+        <div class="form-group">
+          <label for="regPassword">Password (Minimal 6 Karakter):</label>
+          <input type="password" id="regPassword" placeholder="Buat password yang aman" minlength="6" required>
+        </div>
+        <div class="form-group">
+          <label for="regCaptchaInput">Kode Keamanan (CAPTCHA):</label>
+          <div class="captcha-row">
+            <div class="captcha-preview-wrap" id="regCaptchaPreview" title="Klik untuk mengacak kode"></div>
+            <button type="button" class="btn-refresh-captcha" id="regRefreshCaptchaBtn" title="Ganti Kode CAPTCHA">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/>
+              </svg>
+            </button>
+            <input type="text" id="regCaptchaInput" placeholder="Ketik 5 kode di kiri" maxlength="5" required autocomplete="off">
+          </div>
+          <small class="form-hint">Ketik 5 huruf/angka di atas untuk verifikasi anti-bot.</small>
+        </div>
+        <button type="submit" class="btn btn-primary btn-block btn-lg" id="submitRegisterBtn">
+          Buat Akun Saya
+        </button>
+        <p class="auth-switch-text">
+          Sudah punya akun? <a href="#" id="switchToLoginLink">Masuk di sini</a>
+        </p>
+      </form>
+
+      <!-- FORGOT PASSWORD FORM (WITH CAPTCHA) -->
+      <form id="forgotPasswordForm" class="auth-form-content hidden">
+        <div class="auth-subhead-box">
+          <h3 class="auth-subheading">Reset Password Akun</h3>
+          <p class="auth-subdesc">Masukkan email terdaftar dan kode CAPTCHA untuk mereset kata sandi secara langsung.</p>
+        </div>
+        <div class="form-group">
+          <label for="forgotEmail">Email Terdaftar:</label>
+          <input type="email" id="forgotEmail" placeholder="nama@email.com" required>
+        </div>
+        <div class="form-group">
+          <label for="forgotNewPassword">Password Baru (Minimal 6 Karakter):</label>
+          <input type="password" id="forgotNewPassword" placeholder="Buat password baru" minlength="6" required>
+        </div>
+        <div class="form-group">
+          <label for="forgotCaptchaInput">Kode Keamanan (CAPTCHA):</label>
+          <div class="captcha-row">
+            <div class="captcha-preview-wrap" id="forgotCaptchaPreview" title="Klik untuk mengacak kode"></div>
+            <button type="button" class="btn-refresh-captcha" id="forgotRefreshCaptchaBtn" title="Ganti Kode CAPTCHA">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/>
+              </svg>
+            </button>
+            <input type="text" id="forgotCaptchaInput" placeholder="Ketik 5 kode di kiri" maxlength="5" required autocomplete="off">
+          </div>
+        </div>
+        <button type="submit" class="btn btn-primary btn-block btn-lg" id="submitResetPasswordBtn">
+          Simpan Password Baru
+        </button>
+        <p class="auth-switch-text">
+          Ingat password Anda? <a href="#" id="backToLoginFromForgot">Kembali ke Masuk</a>
+        </p>
+      </form>
+    </div>
+  </div>
+
+  <!-- ==================== USER PROFILE & LEVEL STREAMER MODAL ==================== -->
+  <div class="modal-backdrop" id="profileModalBackdrop">
+    <div class="modal-dialog profile-modal-dialog">
+      <button class="modal-close-btn" id="closeProfileModalBtn">&times;</button>
+      
+      <div class="profile-modal-header">
+        <div class="profile-avatar-preview-wrap">
+          <img id="profileModalAvatar" src="" alt="Avatar" class="profile-modal-avatar">
+        </div>
+        <div class="profile-header-info">
+          <div class="profile-title-row">
+            <h2 id="profileModalName">Pengguna Nekumi</h2>
+            <span class="profile-level-badge" id="profileModalLevelBadge">Lv. 1</span>
+          </div>
+          <span class="user-rank-pill" id="profileModalRank">🌱 Otaku Pemula</span>
+          <p id="profileModalEmail" class="profile-email-text">email@nekumi.com</p>
+        </div>
+      </div>
+
+      <!-- STREAM LEVEL & XP PROGRESS WIDGET -->
+      <div class="stream-level-card">
+        <div class="level-header">
+          <div class="level-title-wrap">
+            <span class="level-icon">⚡</span>
+            <strong>Level Streamer</strong>
+          </div>
+          <span class="level-xp-counter" id="profileModalXpCounter">0 / 100 EXP</span>
+        </div>
+        <div class="xp-progress-bar">
+          <div class="xp-progress-fill" id="profileModalXpFill" style="width: 0%;"></div>
+        </div>
+        <div class="level-footer">
+          <span class="level-hint" id="profileModalNextLevelHint">100 EXP lagi untuk naik Level 2</span>
+          <span class="xp-boost-tag">+35 EXP / Nonton Episode</span>
+        </div>
+
+        <!-- User Stream Stats Grid -->
+        <div class="user-stats-grid">
+          <div class="user-stat-card">
+            <span class="stat-number" id="profileModalEpsWatched">0</span>
+            <span class="stat-label">Episode Ditonton</span>
+          </div>
+          <div class="user-stat-card">
+            <span class="stat-number" id="profileModalWatchMins">0m</span>
+            <span class="stat-label">Menit Streaming</span>
+          </div>
+          <div class="user-stat-card">
+            <span class="stat-number" id="profileModalRole">USER</span>
+            <span class="stat-label">Status Akun</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- EDIT PROFILE FORM -->
+      <form id="editProfileForm" class="edit-profile-form">
+        <div class="form-group">
+          <label for="editProfileUsername">Nama Pengguna:</label>
+          <input type="text" id="editProfileUsername" placeholder="Nama tampilan profil" minlength="2" required>
+        </div>
+
+        <div class="form-group">
+          <label>Pilih Icon Avatar Preset:</label>
+          <div class="avatar-presets-grid" id="avatarPresetsGrid"></div>
+        </div>
+
+        <div class="form-group">
+          <label for="editProfileCustomAvatar">Ganti Icon Avatar dengan URL Gambar:</label>
+          <div class="input-with-action">
+            <input type="url" id="editProfileCustomAvatar" placeholder="https://contoh.com/avatar.png">
+            <button type="button" class="btn btn-sm btn-outline-cyan" id="previewCustomAvatarBtn">Tinjau</button>
+          </div>
+          <small class="form-hint">Mendukung URL gambar langsung (.png, .jpg, .webp, .svg). Perubahan akan otomatis tersimpan permanen di database.</small>
+        </div>
+
+        <button type="submit" class="btn btn-primary btn-block btn-lg" id="saveProfileBtn">
+          Simpan Perubahan Profil
+        </button>
+      </form>
+    </div>
+  </div>
+
+  <!-- FLOATING TOAST NOTIFICATION CONTAINER -->
+  <div id="toastContainer" class="toast-container"></div>
+
+  <!-- FOOTER -->
+  <footer class="site-footer">
+    <div class="container footer-inner">
+      <div class="footer-brand">
+        <div class="logo">
+          <div class="logo-icon nekumi-logo-wrap">
+            <img src="/images/nekumi-logo.png" alt="Nekumi Logo" class="nekumi-logo-img">
+          </div>
+          <span class="logo-text">Nekumi<span class="logo-highlight">Stream</span></span>
+        </div>
+        <p class="footer-desc">
+          Streaming anime subtitle Indonesia dengan multi-server cepat, Level Streamer, dan riwayat tontonan otomatis.
+        </p>
+      </div>
+      <div class="footer-links-group">
+        <h4>Navigasi Cepat</h4>
+        <ul>
+          <li><a href="#" data-view="home">Beranda</a></li>
+          <li><a href="#latest" data-view="latest">Anime Baru Rilis</a></li>
+          <li><a href="#popular" data-view="popular">Anime Populer</a></li>
+          <li><a href="#genres" data-view="genres">Daftar Genre</a></li>
+        </ul>
+      </div>
+      <div class="footer-links-group">
+        <h4>Akun & Riwayat</h4>
+        <ul>
+          <li><a href="#history" data-view="history">Riwayat Nonton</a></li>
+          <li><a href="#watchlist" data-view="watchlist">Daftar Favorit</a></li>
+          <li><a href="#admin" data-view="admin" class="admin-only" style="display:none;">Admin Dashboard</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="container footer-bottom">
+      <p>&copy; 2026 Nekumi Streaming Anime. Dibuat untuk pecinta anime subtitle Indonesia.</p>
+    </div>
+  </footer>
+
+  <!-- Scripts -->
+  <script src="/js/auth.js?v=4"></script>
+  <script src="/js/player.js?v=4"></script>
+  <script src="/js/admin.js?v=4"></script>
+  <script src="/js/app.js?v=4"></script>
+  <script>
+    // Initialize Lucide Icons & CinemaVision Interactive Screen Glow
+    document.addEventListener('DOMContentLoaded', () => {
+      if (window.lucide && typeof window.lucide.createIcons === 'function') {
+        window.lucide.createIcons();
+      }
+
+      const screenElem = document.getElementById('screen');
+      const screenText = document.getElementById('screen-text');
+      if (screenElem) {
+        screenElem.addEventListener('click', () => {
+          screenElem.classList.toggle('screen-active');
+          if (screenElem.classList.contains('screen-active')) {
+            if (screenText) screenText.textContent = 'DOLBY VISION • MODE TEATER AKTIF';
+            const lightToggle = document.getElementById('theaterLightToggle');
+            if (lightToggle && !lightToggle.checked) {
+              lightToggle.checked = true;
+              lightToggle.dispatchEvent(new Event('change'));
+            }
+          } else {
+            if (screenText) screenText.textContent = 'DOLBY VISION SCREEN • KLIK UNTUK EFEK TEATER';
+            const lightToggle = document.getElementById('theaterLightToggle');
+            if (lightToggle && lightToggle.checked) {
+              lightToggle.checked = false;
+              lightToggle.dispatchEvent(new Event('change'));
+            }
+          }
+        });
+      }
+    });
+  </script>
+</body>
+</html>
